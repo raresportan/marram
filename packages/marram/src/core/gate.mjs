@@ -5,10 +5,12 @@
 //   full      The default gate and more (a build, the slow journeys). Before merging UI work, or nightly.
 // What each tier runs is the project's: `gate.tiers` in marram.config.mjs. Stages run in order and the first failure
 // stops the gate. Each stage's output is kept in its own log under `gate.logs`/gate-<tier>-<time>/, with report.json.
+// A stage that fails after the machine slept during it runs again: timeouts ran out and frames stopped while it slept,
+// so that failure says nothing about the code. A pause counts as sleep past `gate.sleepGapMs`, 30 seconds by default.
 // The default and full gates record their verdict for the working tree (gate-state.mjs), which the hooks reuse.
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { treeOf, updateState } from "./gate-state.mjs";
 
@@ -19,7 +21,7 @@ export async function gate(root, config, [tier = "default"]) {
 		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full]`);
 		process.exit(1);
 	}
-	const { logs, progress, tiers } = config.gate;
+	const { logs, progress, tiers, sleepGapMs = 30_000 } = config.gate;
 	const dir = join(root, logs, `gate-${tier}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 	await mkdir(dir, { recursive: true });
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
@@ -50,16 +52,26 @@ export async function gate(root, config, [tier = "default"]) {
 		child.stdout.on("data", (chunk) => {
 			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) console.log(`  ${name}: ${line.trim()}`);
 		});
+		let last = Date.now();
+		let slept = 0;
+		const noticeSleep = () => {
+			const gap = Date.now() - last;
+			last += gap;
+			if (gap > sleepGapMs) slept += gap;
+		};
+		const clock = setInterval(noticeSleep, 1000);
 		const code = await new Promise((done) => {
 			child.on("error", () => done(1));
 			child.on("exit", (exit) => done(exit ?? 1));
 		});
+		clearInterval(clock);
+		noticeSleep();
 		log.end();
 		const seconds = Math.round((Date.now() - started) / 1000);
 		report.stages.push({ name, code, seconds });
 		await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
 		console.log(`${code === 0 ? "✓" : "✗"} ${name} (${seconds}s)${code === 0 ? "" : `: see ${join(dir, `${name}.log`)}`}`);
-		return code === 0;
+		return { passed: code === 0, slept };
 	}
 
 	// A fast pass doesn't make a change done, so only the default and full gates record a verdict.
@@ -70,7 +82,12 @@ export async function gate(root, config, [tier = "default"]) {
 
 	console.log(`Gate (${tier}). Logs: ${dir}`);
 	for (const stage of tiers[tier]) {
-		const passed = await runStage(stage);
+		let { passed, slept } = await runStage(stage);
+		while (!passed && slept > 0 && !interrupted) {
+			console.log(`  The machine slept for ${Math.round(slept / 1000)}s during ${stage.name}, so its failure says nothing about the code. Running it again.`);
+			await rename(join(dir, `${stage.name}.log`), join(dir, `${stage.name}-slept.log`));
+			({ passed, slept } = await runStage(stage));
+		}
 		if (interrupted) {
 			console.log(`\nGate interrupted at ${stage.name}.`);
 			process.exit(1);

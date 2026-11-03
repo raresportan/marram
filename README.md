@@ -63,7 +63,8 @@ export default {
 
 `marram gate fast` takes seconds, for each edit. `marram gate` takes minutes, before a task counts as done. `marram gate
 full` adds what's slow, before merging. Stages run in order, the first failure stops the gate, and each stage's output
-is kept in its own log.
+is kept in its own log. A stage that fails after the machine slept during it runs again, because that failure says
+nothing about the code.
 
 ### 2. The hooks
 
