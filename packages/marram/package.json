@@ -11,7 +11,7 @@
   },
   "files": ["src", "bin"],
   "bin": {
-    "marram": "./bin/marram.mjs"
+    "marram": "bin/marram.mjs"
   },
   "exports": {
     "./core/boundaries": "./src/core/boundaries.mjs",
