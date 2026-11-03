@@ -1,6 +1,6 @@
 {
   "name": "@raresportan/marram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The gate, ratchet lints and journeys that keep agent-written code from drifting.",
   "license": "MIT",
   "type": "module",
