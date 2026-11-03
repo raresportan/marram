@@ -1,0 +1,53 @@
+{
+  "name": "@raresportan/marram",
+  "version": "0.1.0",
+  "description": "The gate, ratchet lints and journeys that keep agent-written code from drifting.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raresportan/marram.git",
+    "directory": "packages/marram"
+  },
+  "files": ["src", "bin"],
+  "bin": {
+    "marram": "./bin/marram.mjs"
+  },
+  "exports": {
+    "./core/boundaries": "./src/core/boundaries.mjs",
+    "./core/check-lint": "./src/core/check-lint.mjs",
+    "./core/no-comments": "./src/core/no-comments.mjs",
+    "./core/ratchet": "./src/core/ratchet.mjs",
+    "./core/until": "./src/core/until.ts",
+    "./node/background": "./src/node/background.ts",
+    "./node/promise-lint": "./src/node/promise-lint.mjs",
+    "./node/resource-lint": "./src/node/resource-lint.mjs",
+    "./node/scope": "./src/node/scope.ts",
+    "./react/effect-lint": "./src/react/effect-lint.mjs",
+    "./react/keyed": "./src/react/keyed.ts",
+    "./electron/feature-map": "./src/electron/feature-map.ts",
+    "./electron/frames": "./src/electron/frames.ts",
+    "./electron/geometry": "./src/electron/geometry.ts",
+    "./electron/journey-lint": "./src/electron/journey-lint.mjs",
+    "./electron/run": "./src/electron/run.ts",
+    "./electron/session": "./src/electron/session.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "playwright-core": "*",
+    "react": "^19.3.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependenciesMeta": {
+    "playwright-core": { "optional": true },
+    "react": { "optional": true }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

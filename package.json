@@ -1,0 +1,29 @@
+{
+  "name": "marram",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
+    "gate": "marram gate",
+    "gate:fast": "marram gate fast",
+    "gate:full": "marram gate full",
+    "typecheck": "tsc -p packages/marram",
+    "test": "npm test -w @raresportan/marram"
+  },
+  "devDependencies": {
+    "@raresportan/marram": "*",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "playwright-core": "^1.63.0",
+    "react": "^19.3.0",
+    "typescript": "^5.9.3"
+  }
+}
