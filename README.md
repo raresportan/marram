@@ -134,8 +134,10 @@ importBoundaries({
 
 A file may import from its own layer and from the layers it lists. Another feature is reached only through an
 `index.ts`, either the feature's own or that of one of its sides. Each side has its own because the main process needs
-the host and the renderer the client, and one index for both would pull the host into the renderer. Only a layer with
-`builtins: true` may import `node:` modules or `electron`.
+the host and the renderer the client, and one index for both would pull the host into the renderer. An index only opens
+the feature: its side must still be a layer the file may import. A file in no layer, such as a feature's own index, is no
+way around that: importing it counts as importing what it imports. Only a layer with `builtins: true` may import Node's
+modules, as `node:fs` or `fs`, or `electron`.
 
 ### 5. The first ratchet
 
