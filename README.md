@@ -13,8 +13,8 @@ Each class got a guard, called a rung, as high up this ladder as it would go:
 
 Marram is those rungs, with the project taken out.
 
-It's one package, `@raresportan/marram`, in four parts. Take what you need: `react` and `playwright-core` are only needed
-by the parts that use them.
+It's one package, [`@raresportan/marram` on npm](https://www.npmjs.com/package/@raresportan/marram), in four parts.
+Take what you need: `react` and `playwright-core` are only needed by the parts that use them.
 
 | Import from | For | What's in it |
 |---|---|---|
