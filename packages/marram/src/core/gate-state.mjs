@@ -78,9 +78,23 @@ export function updateState(cwd, change) {
 	});
 }
 
-/** `{ passed, stage?, log?, at }` for a tree the default or full gate passed, or failed less than 15 minutes ago. */
-export function verdictOf(cwd, tree) {
-	const verdict = readState(cwd).trees[tree];
-	if (verdict === undefined || verdict.passed) return verdict;
-	return Date.now() - verdict.at < FAILURE_TTL_MS ? verdict : undefined;
+/**
+ * `{ passed, tier, stage?, log?, at }` for a tree `tier` (the default gate, or the full one) passed, or failed less than
+ * 15 minutes ago. A full pass counts for the default gate.
+ */
+export function verdictOf(cwd, tree, tier = "default") {
+	const trees = readState(cwd).trees;
+	const own = current(trees[verdictKey(tree, tier)]);
+	// The full gate runs every default stage, so its pass answers for the default gate too.
+	if (own === undefined && tier === "default" && trees[verdictKey(tree, "full")]?.passed) return trees[verdictKey(tree, "full")];
+	return own;
 }
+
+/** A verdict that still counts: a pass, or a failure from the last FAILURE_TTL_MS. */
+const current = (verdict) => (verdict === undefined || verdict.passed || Date.now() - verdict.at < FAILURE_TTL_MS ? verdict : undefined);
+
+/**
+ * Where a tier's verdict on `tree` is kept: the default gate's under the tree, the full gate's beside it, so a default run
+ * after a full pass doesn't replace it.
+ */
+export const verdictKey = (tree, tier) => (tier === "full" ? `${tree}:full` : tree);

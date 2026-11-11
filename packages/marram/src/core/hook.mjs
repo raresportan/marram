@@ -1,5 +1,6 @@
 // Runs the gate where work is declared done, so nothing finishes or ships while it's red. Usage:
-//   marram hook pre-push      git's pre-push hook: what's pushed must have passed.
+//   marram hook pre-push      git's pre-push hook: what's pushed must have passed `gate.prePush`, the default gate
+//                           unless that names "full".
 //   marram hook claude-turn   Claude Code's UserPromptSubmit: notes the code a turn starts from.
 //   marram hook claude-stop   Claude Code's Stop: a turn that changed code ends only once the gate passes, sent back at
 //                           most 3 times a turn.
@@ -15,16 +16,16 @@ const MAX_SENT_BACK = 3;
 const MARRAM = join(import.meta.dirname, "..", "..", "bin", "marram.mjs");
 const stdin = () => readFileSync(0, "utf8");
 
-/** The gate's verdict on `tree`, running the default gate when there is none. `show` sends its progress to the terminal. */
-async function judge(root, tree, show) {
-	const known = verdictOf(root, tree);
+/** `tier`'s verdict on `tree`, running that gate when there is none. `show` sends its progress to the terminal. */
+async function judge(root, tree, show, tier = "default") {
+	const known = verdictOf(root, tree, tier);
 	if (known !== undefined) return { ...known, reused: true };
-	const gate = spawn(process.execPath, [MARRAM, "gate"], { cwd: root, stdio: ["ignore", show ? "inherit" : "ignore", "inherit"] });
+	const gate = spawn(process.execPath, [MARRAM, "gate", ...(tier === "default" ? [] : [tier])], { cwd: root, stdio: ["ignore", show ? "inherit" : "ignore", "inherit"] });
 	// A hook that's killed (its timeout) passes it on, so the gate can stop what it started.
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.once(signal, () => gate.kill(signal));
 	await new Promise((done) => gate.once("close", done));
 	// A gate that changed files as it ran records no pass; it counts as failed with no stage.
-	return verdictOf(root, tree) ?? { passed: false };
+	return verdictOf(root, tree, tier) ?? { passed: false };
 }
 
 /** What an agent is told when the gate fails: where it failed, and the end of that stage's log. */
@@ -45,19 +46,24 @@ function failure(verdict) {
 	].join("\n");
 }
 
-async function prePush(root) {
+async function prePush(root, config) {
+	const tier = config.gate?.prePush ?? "default";
+	if (tier !== "default" && tier !== "full") {
+		console.error(`gate.prePush is "${tier}": a push can require the default gate or the full one.`);
+		process.exit(1);
+	}
 	// stdin: one line per ref pushed, "<local ref> <local sha> <remote ref> <remote sha>".
 	for (const line of stdin().split("\n").filter(Boolean)) {
 		const [ref, sha] = line.split(" ");
 		if (/^0+$/.test(sha)) continue; // a deletion
 		const tree = git(root, ["rev-parse", `${sha}^{tree}`]);
-		if (verdictOf(root, tree)?.passed) continue;
+		if (verdictOf(root, tree, tier)?.passed) continue;
 		if (treeOf(root) !== tree) {
-			console.error(`${ref} hasn't passed the gate, and the working tree isn't that commit, so it can't be checked here.\nCommit or stash your changes, check it out and push again (or \`git push --no-verify\` to skip the gate).`);
+			console.error(`${ref} hasn't passed the ${tier} gate, and the working tree isn't that commit, so it can't be checked here.\nCommit or stash your changes, check it out and push again (or \`git push --no-verify\` to skip the gate).`);
 			process.exit(1);
 		}
-		console.error(`Gating ${ref} before it's pushed (\`git push --no-verify\` skips this).`);
-		const verdict = await judge(root, tree, true);
+		console.error(`Gating ${ref} (the ${tier} gate) before it's pushed (\`git push --no-verify\` skips this).`);
+		const verdict = await judge(root, tree, true, tier);
 		if (!verdict.passed) {
 			console.error(failure(verdict));
 			process.exit(1);
@@ -105,10 +111,10 @@ async function finish(root) {
 
 const modes = { "pre-push": prePush, "claude-turn": claudeTurn, "claude-stop": claudeStop, finish };
 
-export async function hook(root, _config, [mode]) {
+export async function hook(root, config, [mode]) {
 	if (!(mode in modes)) {
 		console.error(`Usage: marram hook ${Object.keys(modes).join(" | ")}`);
 		process.exit(1);
 	}
-	await modes[mode](root);
+	await modes[mode](root, config);
 }

@@ -73,6 +73,9 @@ nothing about the code.
 exec node "$(git rev-parse --show-toplevel)/node_modules/@raresportan/marram/bin/marram.mjs" hook pre-push
 ```
 
+A push needs the default gate unless `gate.prePush` is `"full"`, for a project with no CI behind the push. A full pass
+counts for the default gate too, and a default run afterwards doesn't replace it.
+
 ```sh
 # .githooks/commit-msg
 exec node "$(git rev-parse --show-toplevel)/node_modules/@raresportan/marram/bin/marram.mjs" commit-lint "$1"

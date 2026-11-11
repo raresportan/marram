@@ -6,6 +6,7 @@
 //       progress: /lines from a stage worth showing as it runs/,   // besides ✓ and ✗ lines
 //       sleepGapMs: 30000,   // how long a pause counts as the machine sleeping, so a stage that failed runs again
 //       tiers: { fast: [stage, …], default: [stage, …], full: [stage, …] },  // stage: { name, run: [command, …args], env? }
+//       prePush: "full",   // the gate a push must pass (marram hook pre-push): "default" unless set
 //     },
 //     review: { classes: "the mistake-classes doc", rungs: ["type", "lint", …] },
 //   };

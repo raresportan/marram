@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { treeOf, updateState } from "./gate-state.mjs";
+import { treeOf, updateState, verdictKey } from "./gate-state.mjs";
 
 const TIERS = ["fast", "default", "full"];
 
@@ -77,7 +77,7 @@ export async function gate(root, config, [tier = "default"]) {
 	// A fast pass doesn't make a change done, so only the default and full gates record a verdict.
 	const tree = tier === "fast" ? undefined : treeOf(root);
 	const verdict = (passed, extra = {}) => {
-		if (tree !== undefined) updateState(root, (state) => { state.trees[tree] = { passed, tier, at: Date.now(), ...extra }; });
+		if (tree !== undefined) updateState(root, (state) => { state.trees[verdictKey(tree, tier)] = { passed, tier, at: Date.now(), ...extra }; });
 	};
 
 	console.log(`Gate (${tier}). Logs: ${dir}`);
