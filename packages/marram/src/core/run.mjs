@@ -39,7 +39,8 @@ export async function runJourneys({ chosen, run, open, evidence, featureMap }) {
 		} catch (failure) {
 			error = failure instanceof Error ? failure.message : String(failure);
 			console.log(`  ✗ ${error}`);
-			await session.shot?.("failure").catch(() => {});
+			// Evidence is best effort: a session's shot may throw, or not return a promise at all.
+			await Promise.resolve().then(() => session.shot?.("failure")).catch(() => {});
 		} finally {
 			await session.dispose?.();
 		}
