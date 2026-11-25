@@ -58,3 +58,23 @@ test("a full run requires the cited restart check even when the other checks pas
 		rmSync(evidence, { recursive: true, force: true });
 	}
 });
+
+test("a journey that throws doesn't stop the run when its session's shot isn't async", async () => {
+	const evidence = mkdtempSync(join(tmpdir(), "marram-shot-"));
+	try {
+		const ran = [];
+		const passed = await runJourneys({
+			chosen: ["throws", "after"], evidence,
+			open: () => ({ ...session(), shot() {}, dispose: async () => {} }),
+			run: async (journey) => {
+				ran.push(journey);
+				if (journey === "throws") throw new Error("boom");
+			},
+		});
+		assert.equal(passed, false);
+		assert.deepEqual(ran, ["throws", "after"]);
+		assert.deepEqual(JSON.parse(readFileSync(join(evidence, "report.json"), "utf8")).map((row) => row.error), ["boom", undefined]);
+	} finally {
+		rmSync(evidence, { recursive: true, force: true });
+	}
+});

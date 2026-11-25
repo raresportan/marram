@@ -1,6 +1,6 @@
 // What a user does with Tally, driven on the built app.
 import { hiddenControls } from "@raresportan/marram/electron/geometry";
-import { checkFeatureMap } from "@raresportan/marram/electron/feature-map";
+import { checkFeatureMap } from "@raresportan/marram/core/feature-map";
 import { join } from "node:path";
 import { type Session, TALLY } from "./harness.ts";
 

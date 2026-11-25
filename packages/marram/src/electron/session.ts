@@ -1,7 +1,7 @@
 // A journey drives the built Electron app as a user would and records named checks, with screenshots as evidence. The
 // session launches the app with a profile of its own, keeps out of the user's way while it runs, and holds the checks:
 // a check given a function polls it, so it never races what the app is still doing, and one nobody awaited is still
-// unsettled when the journey ends, which fails it (see run.ts). A project extends it with its own setup (a backend
+// unsettled when the journey ends, which fails it (see core/run.mjs). A project extends it with its own setup (a backend
 // to start, a client to connect).
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -9,11 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
 
-export interface Check {
-	readonly label: string;
-	readonly ok: boolean;
-	readonly detail?: string;
-}
+import type { Check } from "../core/run.mjs";
+export type { Check } from "../core/run.mjs";
 
 export interface JourneyOptions {
 	/** Where screenshots and the report go. */
@@ -114,7 +111,7 @@ export class JourneySession {
 	 * Records a check. Given a value, it records what the journey already knows. Given a function that reads the page
 	 * or the app, it polls it until it holds, for up to `CHECK_MS` (a throw counts as not yet): read once, a check
 	 * races whatever the app is still doing. A `detail` function is read on failure, so it says what was seen at the
-	 * end. Await the function form: `@raresportan/marram/electron/journey-lint` fails on one that isn't.
+	 * end. Await the function form: `@raresportan/marram/core/journey-lint` fails on one that isn't.
 	 */
 	check(label: string, ok: boolean, detail?: string): void;
 	check(label: string, ok: () => boolean | Promise<boolean>, detail?: string | (() => string | undefined | Promise<string | undefined>)): Promise<void>;

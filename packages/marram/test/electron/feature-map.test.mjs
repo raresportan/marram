@@ -55,8 +55,13 @@ test("a citation of nothing, and a feature with no status, are problems", () => 
 	const server = [{ pattern: /^server › (\S+)$/, broken: ([, script]) => `no server script ${script}` }];
 	assert.deepEqual(read(map, server), {
 		broken: ["line 1: a status outside any feature", 'line 3: sidebar has no check "The sidebar is purple"', 'line 4: no journey in "settings"', "line 5: no server script gone.ts"],
-		unmarked: ["Search."],
+		unmarked: ["Search"],
 		features: 2,
 		gaps: 0,
 	});
+});
+
+test("the static check reads a map saved with CRLF endings or trailing spaces as the runtime check does", () => {
+	const map = '- **Sidebar.**  \r\n  - ✅ sidebar › "The sidebar lists documents"  \r\n- **Gap**\r\n  - ❌ not yet\r\n- **Unmarked:**\r\n';
+	assert.deepEqual(read(map), { broken: [], unmarked: ["Unmarked"], features: 3, gaps: 1 });
 });

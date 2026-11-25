@@ -18,10 +18,10 @@ Take what you need: `react` and `playwright-core` are only needed by the parts t
 
 | Import from | For | What's in it |
 |---|---|---|
-| `@raresportan/marram/core/…` | Any project | Ratchet lints, import boundaries, the no-comments rule, the check lint, `until`, `sooner`, `scales`; the `marram` command runs the gate, its hooks and the review-fix commit lint |
+| `@raresportan/marram/core/…` | Any project | Project gates, feature maps, journey evidence, ratchet lints, import boundaries, the no-comments rule, the check lint, `until`, `sooner`, `scales`; the `marram` command runs the gate, its hooks and the review-fix commit lint |
 | `@raresportan/marram/node/…` | Node | `background`, `Scope`, the promise lint, the resource finder |
 | `@raresportan/marram/react/…` | React | `useKeyed`, the effect finder |
-| `@raresportan/marram/electron/…` | Electron | Journeys: `JourneySession`, `runJourneys`, the stale-build guard, layout geometry, frame rates, the feature map, the journey lint |
+| `@raresportan/marram/electron/…` | Electron | Electron session, typed IPC, layout geometry and frame rates |
 
 ## The ideas
 
@@ -37,6 +37,22 @@ behaviour takes.
 
 **Named mistakes.** A commit that fixes review findings names each one's class and rung. Without that, review only ever
 produces point fixes, and nobody sees a class recurring or a rung missing.
+
+## Start with the checks your project already runs
+
+Marram runs on Node. A gate stage can launch any executable available in the project environment.
+For example, a Python service can use this `marram.config.mjs` in its Git repository:
+
+```js
+const tests = [{ name: "tests", run: ["python", "-m", "pytest"] }];
+export default { gate: { logs: ".verify", tiers: { fast: tests, default: tests, full: tests } } };
+```
+
+Ignore `.verify/` in Git, install Marram as a development tool, and run `npx marram gate`.
+For a plain Node CLI, a stage can run `["node", "--test"]`. The TypeScript lints and Electron adapter are optional.
+For named behavioral checks, import `runJourneys` from `@raresportan/marram/core/run` and provide a session with
+a `checks` array of `{ label, ok }` observations. The runner writes the report and checks feature-map citations.
+Projects can supply their own CLI, HTTP or browser driver. Tally below demonstrates the Electron adapter.
 
 ## Tutorial: Tally
 

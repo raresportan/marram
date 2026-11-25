@@ -1,6 +1,6 @@
 // Runs Tally's journeys against its build. Usage: npm run verify -w tally -- [<journey>...] [--stale] [--keep]
 import { join } from "node:path";
-import { runJourneys, staleInput } from "@raresportan/marram/electron/run";
+import { runJourneys, staleInput } from "@raresportan/marram/core/run";
 import { Session, TALLY } from "./harness.ts";
 import { JOURNEYS } from "./journeys.ts";
 
