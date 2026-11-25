@@ -22,3 +22,19 @@ test("a contract's client reaches the handler registered for the same operation"
 	assert.equal(await client.add(2), 3);
 	assert.deepEqual(sent, [["counter:read"], ["counter:add", 2]]);
 });
+
+test("a contract registers nothing when a handler is missing, and calls handlers on their object", async () => {
+	const contract = defineIpc("store", { read: operation(), write: operation() });
+	const registered = new Map();
+	const register = (channel, handler) => registered.set(channel, handler);
+	assert.throws(() => contract.handle(register, { read: () => 1 }), /store has no handler for write/);
+	assert.equal(registered.size, 0);
+	class Store {
+		value = 4;
+		read() { return this.value; }
+		write(value) { this.value = value; }
+	}
+	contract.handle(register, new Store());
+	await registered.get("store:write")({}, 7);
+	assert.equal(await registered.get("store:read")({}), 7);
+});

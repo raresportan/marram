@@ -240,7 +240,8 @@ obligations removed since the merge base. Removals are informational so a mainta
 ### Replay a regression on two revisions
 
 Commit the candidate fix and its regression test. From the project root, run
-`marram replay <base-ref> <test-file> "<top-level node:test name>" "<assertion message>"`.
+`marram replay <base-ref> <test-file> "<test name>" "<assertion message>"`, naming the node:test `test()` or `it()` that
+makes the assertion (not a `describe()` around it).
 Use an explicit message on the assertion that demonstrates the defect. The command copies the committed HEAD test
 file into two temporary Git clones and runs the named test against each revision. Its JSON output records both
 commit IDs and observations. Success requires the named assertion failure on the base and a pass on HEAD.
@@ -256,7 +257,15 @@ Declare operations with the argument and reply types in shared code, for example
 `@raresportan/marram/electron/ipc`. In the host, call `contract.handle(register, handlers)` with a handler
 for each operation. In preload, `contract.client(invoke)` builds the matching promise-returning methods.
 Tally's counter demonstrates both Electron adapters. The contract checks TypeScript callers and handlers at build
-time. Validate untrusted input and authorize senders at the application boundary when required.
+time, not at run time, so validate untrusted arguments in the handlers. `register` receives each channel's handler,
+which takes Electron's event first, so it is the place to check the sender:
+
+```ts
+counterIpc.handle((channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+	if (event.senderFrame?.url !== trustedUrl) throw new Error(`${channel} from an untrusted frame`);
+	return handler(event, ...args);
+}), handlers);
+```
 
 ### Testing the guards
 

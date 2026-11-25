@@ -12,3 +12,8 @@ const reply: Promise<number> = client.read();
 void reply;
 // @ts-expect-error the client must send a number
 void client.write("one");
+class Store {
+	read(): number { return 1; }
+	write(value: number): void { void value; }
+}
+contract.handle(register, new Store());
