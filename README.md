@@ -258,6 +258,14 @@ for each operation. In preload, `contract.client(invoke)` builds the matching pr
 Tally's counter demonstrates both Electron adapters. The contract checks TypeScript callers and handlers at build
 time. Validate untrusted input and authorize senders at the application boundary when required.
 
+### Testing the guards
+
+`npm run guard-fixtures` exercises three known mistakes in a disposable copy of Marram and Tally.
+Each probe runs the clean project first, introduces one fault, and checks for the diagnostic associated with that
+fault. The probes cover a shared cache verdict across nested projects, a missing IPC handler, and a restart check
+left in an uncalled helper. A setup error or unexpected diagnostic fails the experiment. This suite runs in the full
+gate and requires the same Electron environment as Tally's journeys.
+
 ## Credit
 
 The approach, and terms such as the trust ladder and the feature map, come from Lauren Tan's talk ["here's how i shipped

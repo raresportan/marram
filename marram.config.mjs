@@ -6,7 +6,7 @@ const tally = (tier) => ({ name: "tally", run: ["npm", "run", tier, "-w", "tally
 export default {
 	gate: {
 		logs: ".verify",
-		tiers: { fast: [...fast, tally("gate:fast")], default: [...fast, tally("gate")], full: [...fast, tally("gate:full")] },
+		tiers: { fast: [...fast, tally("gate:fast")], default: [...fast, tally("gate")], full: [...fast, tally("gate:full"), npm("guard-fixtures", "run", "guard-fixtures")] },
 	},
 	review: { classes: "docs/mistake-classes.md" },
 };
