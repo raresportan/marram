@@ -27,6 +27,7 @@ if (changed !== undefined && !flags.has("--stale")) {
 
 const passed = await runJourneys<Session>({
 	chosen,
+	...(named.length === 0 ? { featureMap: { path: join(TALLY, "docs", "feature-map.md") } } : {}),
 	run: (journey, session) => JOURNEYS[journey]!.run(session),
 	open: (journey, evidence) => new Session(journey, { evidence, keep: flags.has("--keep"), osCapture: false }),
 	evidence: join(TALLY, ".verify", new Date().toISOString().replace(/[:.]/g, "-")),

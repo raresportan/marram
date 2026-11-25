@@ -246,3 +246,13 @@ Marram is a separate project, with no code from it.
 ## License
 
 MIT
+
+### Runtime evidence for a feature map
+
+Pass `featureMap: { path }` to `runJourneys` when running the whole map. Each journey citation must resolve to a
+passing journey in that run, and each named check must appear among its passed observations. The runner records gaps in
+`missing-citations.json` beside the normal report. Use the static feature-map check for partial runs. For custom
+citations verified by another checker, supply their patterns in `featureMap.custom`.
+
+Run `marram map-diff origin/main docs/feature-map.md` from the project root in PR review to list verification
+obligations removed since the merge base. Removals are informational so a maintainer can review intentional changes.
