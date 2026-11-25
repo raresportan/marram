@@ -1,6 +1,6 @@
 // Exercise each guard twice in a disposable project. A different failure makes the experiment inconclusive.
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -48,10 +48,15 @@ try {
 	for (const entry of readdirSync(join(root, "node_modules"))) {
 		if (entry !== "@raresportan" && entry !== ".bin") symlinkSync(join(root, "node_modules", entry), join(deps, entry));
 	}
-	// The same relative links, so a command such as `marram` runs the copy under test, not the original.
+	// The same entries, resolved from the copy, so a command such as `marram` runs the copy under test, not the original:
+	// a link keeps its relative target, and a wrapper script (npm's shims on Windows) is copied, since it finds its
+	// package relative to itself.
 	mkdirSync(join(deps, ".bin"));
 	for (const entry of readdirSync(join(root, "node_modules/.bin"))) {
-		symlinkSync(readlinkSync(join(root, "node_modules/.bin", entry)), join(deps, ".bin", entry));
+		const from = join(root, "node_modules/.bin", entry);
+		const to = join(deps, ".bin", entry);
+		if (lstatSync(from).isSymbolicLink()) symlinkSync(readlinkSync(from), to);
+		else cpSync(from, to, { preserveTimestamps: true });
 	}
 	symlinkSync(join(scratch, "packages/marram"), join(deps, "@raresportan/marram"));
 	probe({
