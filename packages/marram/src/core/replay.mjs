@@ -19,6 +19,10 @@ function staysInside(folder, path) {
 export function replay(root, config, args) {
 	const [baseRef, file, name, assertion] = args;
 	if (args.length !== 4 || args.some((value) => !value)) throw new Error("Usage: marram replay <base> <test-file> <test-name> <expected assertion message>");
+	const setup = config.replay?.setup;
+	if (setup !== undefined && (!Array.isArray(setup) || setup.length === 0 || !setup.every((part) => typeof part === "string" && part !== ""))) {
+		throw new Error('replay.setup in marram.config.mjs must be a command and its arguments, as in ["npm", "ci"]');
+	}
 	const repo = git(root, "rev-parse", "--show-toplevel");
 	const project = relative(repo, root);
 	const path = relative(repo, resolve(root, file));
@@ -41,7 +45,6 @@ export function replay(root, config, args) {
 		mkdirSync(dirname(target), { recursive: true });
 		rmSync(target, { force: true });
 		writeFileSync(target, check);
-		const setup = config.replay?.setup;
 		if (setup) {
 			const result = spawnSync(setup[0], setup.slice(1), { cwd, stdio: ["ignore", 2, 2] });
 			if (result.status !== 0) return { state: "inconclusive", detail: "Setup failed" };
@@ -54,6 +57,7 @@ export function replay(root, config, args) {
 			const row = selected[0];
 			if (row.passed && run.status === 0) return { state: "passed", detail: name };
 			if (run.status === 1 && row.code === "ERR_ASSERTION" && row.message?.split("\n")[0] === assertion) return { state: "failed assertion", detail: row.message };
+			if (row.failureType === "subtestsFailed") return { state: "inconclusive", detail: `"${name}" is a suite: name the test inside it that makes the assertion` };
 		}
 		return { state: "inconclusive", detail: rows.find((row) => row.message)?.message ?? "Selected test did not produce one completed result" };
 	}
