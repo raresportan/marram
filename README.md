@@ -237,6 +237,19 @@ citations verified by another checker, supply their patterns in `featureMap.cust
 Run `marram map-diff origin/main docs/feature-map.md` from the project root in PR review to list verification
 obligations removed since the merge base. Removals are informational so a maintainer can review intentional changes.
 
+### Replay a regression on two revisions
+
+Commit the candidate fix and its regression test. From the project root, run
+`marram replay <base-ref> <test-file> "<test name>" "<assertion message>"`, naming the node:test `test()` or `it()` that
+makes the assertion (not a `describe()` around it).
+Use an explicit message on the assertion that demonstrates the defect. The command copies the committed HEAD test
+file into two temporary Git clones and runs the named test against each revision. Its JSON output records both
+commit IDs and observations. Success requires the named assertion failure on the base and a pass on HEAD.
+Skipped tests, setup errors, other failures, and checks that pass on both revisions cannot demonstrate a fix.
+
+If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
+Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.
+
 ## Credit
 
 The approach, and terms such as the trust ladder and the feature map, come from Lauren Tan's talk ["here's how i shipped
