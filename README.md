@@ -265,6 +265,7 @@ Each probe runs the clean project first, introduces one fault, and checks for th
 fault. The probes cover a shared cache verdict across nested projects, a missing IPC handler, and a restart check
 left in an uncalled helper. A setup error or unexpected diagnostic fails the experiment. This suite runs in the full
 gate and requires the same Electron environment as Tally's journeys.
+Each command gets five minutes; set `GUARD_FIXTURES_TIMEOUT_MS` to change that.
 
 ## Credit
 
