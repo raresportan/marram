@@ -26,7 +26,7 @@ Take what you need: `react` and `playwright-core` are only needed by the parts t
 ## The ideas
 
 **One gate.** "Done" means `marram gate` passed. A pre-push hook refuses code that hasn't, and a Claude Code hook sends a
-turn back while it's red. The verdict is kept per working tree, so code that passed isn't checked again.
+turn back while it's red. Each project caches its verdict for the current Git tree, so its hooks can reuse a pass on the same code.
 
 **Ratchets.** A rule usually can't be true everywhere on day one. So a site off the list fails with what to do instead,
 an entry with no reason fails, and an entry that no longer matches fails until it's removed. The list only shrinks.
@@ -63,7 +63,8 @@ export default {
 
 `marram gate fast` takes seconds, for each edit. `marram gate` takes minutes, before a task counts as done. `marram gate
 full` adds what's slow, before merging. Stages run in order, the first failure stops the gate, and each stage's output
-is kept in its own log. A stage that fails after the machine slept during it runs again, because that failure says
+is kept in its own log. On failure the terminal shows up to 60 lines starting at the first failure marker, or the last
+60 lines when the log has no marker. A stage that fails after the machine slept during it runs again, because that failure says
 nothing about the code.
 
 ### 2. The hooks
@@ -100,6 +101,11 @@ finding, or the `commit-msg` hook refuses it:
 ```
 Class: state. Rung: lint (rules fails without it)
 ```
+
+Run `marram review-summary --since <tag>` to see annotated findings in commits since a release. Omit `--since` for
+all history reachable from HEAD. Classes with the most findings appear first, grouped by rung, with the finding,
+its recorded rationale and a commit reference. GitHub origins get commit URLs. A finding with two classes appears
+under each and counts once in the overall total. The summary also counts findings marked `Rung: none`.
 
 ### 4. One folder per feature
 
@@ -148,13 +154,14 @@ modules, as `node:fs` or `fs`, or `electron`.
 Tally keeps the count in one place. So the count's file is read and written only in `host/store.ts`:
 
 ```js
-import { restrict, finish, lineOf } from "@raresportan/marram/core/ratchet";
+import { importsOf } from "@raresportan/marram/core/boundaries";
+import { restrict, finish } from "@raresportan/marram/core/ratchet";
 
 const problems = restrict({
-	root,
+	root: process.cwd(),
 	folder: "src",
 	owners: ["features/counter/host/store.ts"],
-	find: fileAccess,
+	find: importsOf("fs"),
 	allowed: {},
 	list: "scripts/rules.mjs",
 	fix: "go through the counter's store",
@@ -163,8 +170,23 @@ const problems = restrict({
 finish("rules", problems, "files are touched only in the store");
 ```
 
-`find` takes a parsed source file and returns where it does the thing, as `{ line, what }`. A file that's listed needs a
-reason. Add `acquisitions`, `effectSets` and `lintPromises` from its `node` and `react` parts the same way.
+Run the script from the project root with `node scripts/rules.mjs`. An import of `node:fs/promises` outside the store
+now fails with the file, line and instruction to go through the store. `importsOf(...names)` matches literal ES imports
+(including type-only imports), re-exports and dynamic imports of named modules and their subpaths.
+
+`find` takes a parsed source file and returns where it does the thing, as `{ line, what }`. A string entry in `allowed` covers all matches in that file.
+
+To keep a legacy file at its current count, use an entry like this with the `acquisitions` finder:
+
+```js
+allowed: { "legacy/poller.ts": { count: 3, reason: "Move the three timers to Scope as their callers migrate" } }
+```
+
+A fourth match fails with the rule's fix. Removing one asks you to lower the count to two. Removing the last one
+asks you to delete the entry. The count tracks how many matches the finder reports, so replacing one with another
+keeps the same count.
+
+Add `acquisitions`, `effectSets` and `lintPromises` from its `node` and `react` parts the same way.
 
 To keep agents from leaving explanations in place of fixes, `@raresportan/marram/core/no-comments` is a finder for the same rule.
 It accepts doc comments on declarations, license headers and comments with a link.

@@ -11,7 +11,7 @@ const KEEP = 50;
 // What the lock guards takes milliseconds, so a lock this old was left by a hook that was killed.
 const STALE_LOCK_MS = 10_000;
 
-export const git = (cwd, args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).trim();
+export const git = (cwd, args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).replace(/\r?\n$/, "");
 
 /** The working tree as a git tree hash: tracked and untracked files, not ignored ones. Same hash, same code. */
 export function treeOf(cwd) {
@@ -84,17 +84,20 @@ export function updateState(cwd, change) {
  */
 export function verdictOf(cwd, tree, tier = "default") {
 	const trees = readState(cwd).trees;
-	const own = current(trees[verdictKey(tree, tier)]);
+	const project = projectTreeKey(cwd, tree);
+	const own = current(trees[verdictKey(project, tier)]);
 	// The full gate runs every default stage, so its pass answers for the default gate too.
-	if (own === undefined && tier === "default" && trees[verdictKey(tree, "full")]?.passed) return trees[verdictKey(tree, "full")];
+	if (own === undefined && tier === "default") {
+		const full = trees[verdictKey(project, "full")];
+		if (full?.passed) return full;
+	}
 	return own;
 }
 
 /** A verdict that still counts: a pass, or a failure from the last FAILURE_TTL_MS. */
 const current = (verdict) => (verdict === undefined || verdict.passed || Date.now() - verdict.at < FAILURE_TTL_MS ? verdict : undefined);
 
-/**
- * Where a tier's verdict on `tree` is kept: the default gate's under the tree, the full gate's beside it, so a default run
- * after a full pass doesn't replace it.
- */
-export const verdictKey = (tree, tier) => (tier === "full" ? `${tree}:full` : tree);
+/** The config directory within the worktree distinguishes projects sharing the same Git tree and state file. */
+export const projectTreeKey = (cwd, tree) => JSON.stringify([git(cwd, ["rev-parse", "--show-prefix"]), tree]);
+
+export const verdictKey = (projectTree, tier) => (tier === "full" ? `${projectTree}:full` : projectTree);

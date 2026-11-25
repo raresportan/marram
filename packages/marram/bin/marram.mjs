@@ -5,14 +5,15 @@
 //   marram commit-lint <message file>          a review fix names each finding's class and rung (src/commit-lint.mjs)
 //   marram commit-lint --range <from>..<to>
 import { lintCommits } from "../src/core/commit-lint.mjs";
+import { reviewSummary } from "../src/core/review-summary.mjs";
 import { load } from "../src/core/config.mjs";
 import { gate } from "../src/core/gate.mjs";
 import { hook } from "../src/core/hook.mjs";
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { gate, hook, "commit-lint": lintCommits };
+const commands = { gate, hook, "commit-lint": lintCommits, "review-summary": reviewSummary };
 if (!(command in commands)) {
-	console.error("Usage: marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to>");
+	console.error("Usage: marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>]");
 	process.exit(1);
 }
 const { root, config } = await load();

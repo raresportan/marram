@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { importBoundaries } from "../../src/core/boundaries.mjs";
+import { importBoundaries, importsOf } from "@raresportan/marram/core/boundaries";
+import { parse } from "@raresportan/marram/core/ratchet";
 
 const LAYERS = {
 	"features/*/shared": { may: [] },
@@ -102,4 +103,26 @@ test("a listed import is allowed, and the list only shrinks", () => {
 	const bad = { "features/a/client/V.tsx": `import { x } from "../host/s.ts";`, "features/a/host/s.ts": "export const x = 1;" };
 	assert.deepEqual(lint(bad, { "features/a/client/V.tsx -> ../host/s.ts": "being moved" }), []);
 	assert.deepEqual(lint({ "features/a/host/s.ts": "" }, { "features/a/client/V.tsx -> ../host/s.ts": "being moved" }), ["features/a/client/V.tsx -> ../host/s.ts is no longer imported that way: remove it from rules.mjs"]);
+});
+
+test("an ownership finder matches literal imports and subpaths at module boundaries", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-imports-"));
+	try {
+		const file = join(root, "consumer.ts");
+		writeFileSync(file, [
+			'import type { Stats } from "fs";',
+			'export * from "node:fs/promises";',
+			'const db = import("@team/db/client");',
+			'import "fs-extra";',
+			'import "@team/db-tools";',
+			'const other = import(variable);',
+		].join("\n"));
+		assert.deepEqual(importsOf("node:fs", "@team/db")(parse(file)), [
+			{ line: 1, what: "imports fs" },
+			{ line: 2, what: "imports node:fs/promises" },
+			{ line: 3, what: "imports @team/db/client" },
+		]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });

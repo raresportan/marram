@@ -76,6 +76,17 @@ function imports(source) {
 	return found;
 }
 
+/** A restrict finder for literal module imports and their subpaths, including Node builtin aliases. */
+export function importsOf(...modules) {
+	const normalize = (name) => isBuiltin(name) ? name.replace(/^node:/, "") : name;
+	const names = modules.map(normalize);
+	return (source) => imports(source).flatMap((specifier) => {
+		const target = normalize(specifier.text);
+		if (!names.some((name) => target === name || target.startsWith(name + "/"))) return [];
+		return [{ line: lineOf(source, specifier), what: `imports ${specifier.text}` }];
+	});
+}
+
 /**
  * Problems with the imports under `root`/`folder`, given its `layers` (`{ pattern: { may: [patterns], builtins? } }`),
  * against the ratchet list `allowed` (`{ "file -> import": reason }`, kept in `list`).
