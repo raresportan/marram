@@ -27,13 +27,14 @@ export function replay(root, config, args) {
 	const base = git(root, "rev-parse", "--verify", "--end-of-options", baseRef + "^{commit}");
 	const check = execFileSync("git", ["show", candidate + ":" + path.split(sep).join("/")], { cwd: root });
 	const scratch = mkdtempSync(join(tmpdir(), "marram-replay-"));
-	const worktrees = [];
 	const pattern = "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
 
 	function runCheck(revision, side) {
 		const checkout = join(scratch, side);
-		git(repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", "--", checkout, revision);
-		worktrees.push(checkout);
+		// A clone of its own, so setup can't touch the caller's refs, config or worktrees; --shared borrows the objects
+		// instead of copying them.
+		git(repo, "clone", "-q", "--shared", "--no-checkout", "--", repo, checkout);
+		git(checkout, "-c", "core.hooksPath=/dev/null", "-c", "advice.detachedHead=false", "checkout", "-q", "--detach", revision);
 		const cwd = join(checkout, project);
 		const target = join(checkout, path);
 		if (!staysInside(checkout, dirname(target))) throw new Error("Test directory points outside checkout");
@@ -71,8 +72,6 @@ export function replay(root, config, args) {
 		console.log(JSON.stringify({ test: name, assertion, base: { revision: base, ...before }, candidate: { revision: candidate, ...after } }, null, 2));
 		if (before.state !== "failed assertion" || after.state !== "passed") process.exitCode = 1;
 	} finally {
-		for (const worktree of worktrees) spawnSync("git", ["worktree", "remove", "--force", "--", worktree], { cwd: repo });
 		rmSync(scratch, { recursive: true, force: true });
-		spawnSync("git", ["worktree", "prune"], { cwd: repo });
 	}
 }
