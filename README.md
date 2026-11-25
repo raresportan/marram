@@ -257,7 +257,15 @@ Declare operations with the argument and reply types in shared code, for example
 `@raresportan/marram/electron/ipc`. In the host, call `contract.handle(register, handlers)` with a handler
 for each operation. In preload, `contract.client(invoke)` builds the matching promise-returning methods.
 Tally's counter demonstrates both Electron adapters. The contract checks TypeScript callers and handlers at build
-time. Validate untrusted input and authorize senders at the application boundary when required.
+time, not at run time, so validate untrusted arguments in the handlers. `register` receives each channel's handler,
+which takes Electron's event first, so it is the place to check the sender:
+
+```ts
+counterIpc.handle((channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+	if (event.senderFrame?.url !== trustedUrl) throw new Error(`${channel} from an untrusted frame`);
+	return handler(event, ...args);
+}), handlers);
+```
 
 ## Credit
 

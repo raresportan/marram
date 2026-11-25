@@ -22,10 +22,11 @@ export function defineIpc<C extends Contract>(namespace: string, operations: C) 
 			return Object.fromEntries(names.map((name) => [name, (...args: unknown[]) => invoke(namespace + ":" + name, ...args)])) as unknown as IpcClient<C>;
 		},
 		handle(register: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => void, handlers: Handlers<C>): void {
-			for (const name of names) {
-				const handle = handlers[name] as (...args: unknown[]) => unknown;
-				register(namespace + ":" + name, (_event, ...args) => handle(...args));
-			}
+			const methods = handlers as unknown as Record<string, (...args: unknown[]) => unknown>;
+			const missing = names.filter((name) => typeof methods[name] !== "function");
+			if (missing.length > 0) throw new Error(`${namespace} has no handler for ${missing.join(", ")}`);
+			// Called on `handlers`, so an object's methods (a store's read and increment) keep their `this`.
+			for (const name of names) register(namespace + ":" + name, (_event, ...args) => methods[name]!(...args));
 		},
 	};
 }
