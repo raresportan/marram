@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const CORE = join(import.meta.dirname, "../../src/core");
@@ -24,7 +25,7 @@ test("each core module's declarations match its exports", async () => {
 	assert.ok(pairs.length > 0);
 	for (const module of pairs) {
 		assert.ok(existsSync(join(CORE, module)), `${module} has declarations but no module`);
-		const actual = Object.keys(await import(join(CORE, module))).sort();
+		const actual = Object.keys(await import(pathToFileURL(join(CORE, module)).href)).sort();
 		assert.deepEqual([...new Set(declaredValues(join(CORE, module.replace(/\.mjs$/, ".d.mts"))))].sort(), actual, module);
 	}
 });
