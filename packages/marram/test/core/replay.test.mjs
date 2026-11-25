@@ -30,6 +30,7 @@ test("replay distinguishes a regression from unchanged behavior and unrelated fa
 		assert.match(JSON.parse(redGreen.stdout).base.detail, /0 !== 1/);
 		assert.equal(replay("HEAD", "stored value").status, 1);
 		assert.equal(JSON.parse(replay(base, "different assertion").stdout).base.state, "inconclusive");
+		assert.equal(git("worktree", "list").split("\n").length, 1, "replay removes its worktrees");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

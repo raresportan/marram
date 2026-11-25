@@ -242,11 +242,11 @@ obligations removed since the merge base. Removals are informational so a mainta
 Commit the candidate fix and its regression test. From the project root, run
 `marram replay <base-ref> <test-file> "<top-level node:test name>" "<assertion message>"`.
 Use an explicit message on the assertion that demonstrates the defect. The command copies the committed HEAD test
-file into two temporary Git checkouts and runs the named test against each revision. Its JSON output records both
+file into two temporary Git worktrees and runs the named test against each revision. Its JSON output records both
 commit IDs and observations. Success requires the named assertion failure on the base and a pass on HEAD.
 Skipped tests, setup errors, other failures, and checks that pass on both revisions cannot demonstrate a fix.
 
-If the project needs dependencies or a build, configure `replay: { setup: ["npm", "ci"] }` or a project setup script.
+If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
 Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.
 
 ## Credit

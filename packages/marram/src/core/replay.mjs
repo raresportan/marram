@@ -1,11 +1,20 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const reporter = fileURLToPath(new URL("./replay-reporter.mjs", import.meta.url));
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
+
+/** Whether `path`, once its existing part's symlinks are resolved, stays inside `folder`. Checked before creating anything. */
+function staysInside(folder, path) {
+	let existing = path;
+	while (!existsSync(existing)) existing = dirname(existing);
+	const real = join(realpathSync(existing), relative(existing, path));
+	const offset = relative(realpathSync(folder), real);
+	return offset !== ".." && !offset.startsWith(".." + sep);
+}
 
 export function replay(root, config, args) {
 	const [baseRef, file, name, assertion] = args;
@@ -18,16 +27,17 @@ export function replay(root, config, args) {
 	const base = git(root, "rev-parse", "--verify", "--end-of-options", baseRef + "^{commit}");
 	const check = execFileSync("git", ["show", candidate + ":" + path.split(sep).join("/")], { cwd: root });
 	const scratch = mkdtempSync(join(tmpdir(), "marram-replay-"));
+	const worktrees = [];
 	const pattern = "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
 
 	function runCheck(revision, side) {
 		const checkout = join(scratch, side);
-		git(repo, "clone", "-q", "--no-hardlinks", "--no-checkout", "--", repo, checkout);
-		git(checkout, "checkout", "-q", "--detach", revision);
+		git(repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "--detach", "--", checkout, revision);
+		worktrees.push(checkout);
 		const cwd = join(checkout, project);
 		const target = join(checkout, path);
+		if (!staysInside(checkout, dirname(target))) throw new Error("Test directory points outside checkout");
 		mkdirSync(dirname(target), { recursive: true });
-		if (relative(realpathSync(checkout), realpathSync(dirname(target))).split(sep)[0] === "..") throw new Error("Test directory points outside checkout");
 		rmSync(target, { force: true });
 		writeFileSync(target, check);
 		const setup = config.replay?.setup;
@@ -61,6 +71,8 @@ export function replay(root, config, args) {
 		console.log(JSON.stringify({ test: name, assertion, base: { revision: base, ...before }, candidate: { revision: candidate, ...after } }, null, 2));
 		if (before.state !== "failed assertion" || after.state !== "passed") process.exitCode = 1;
 	} finally {
+		for (const worktree of worktrees) spawnSync("git", ["worktree", "remove", "--force", "--", worktree], { cwd: repo });
 		rmSync(scratch, { recursive: true, force: true });
+		spawnSync("git", ["worktree", "prune"], { cwd: repo });
 	}
 }
