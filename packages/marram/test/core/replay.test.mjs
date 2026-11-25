@@ -47,8 +47,8 @@ function repository(make) {
 	};
 	git("init", "-q");
 	const { NODE_TEST_CONTEXT, ...env } = process.env;
-	const replay = (base, file) => spawnSync(process.execPath, [fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url)),
-		"replay", base, file, "reads one", "stored value"], { cwd: root, env, encoding: "utf8" });
+	const replay = (base, file, name = "reads one") => spawnSync(process.execPath, [fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url)),
+		"replay", base, file, name, "stored value"], { cwd: root, env, encoding: "utf8" });
 	return { root, git, commit, replay, remove: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -93,5 +93,42 @@ test("replay won't write the test through a directory that points outside its ch
 	} finally {
 		repo.remove();
 		rmSync(outside, { recursive: true, force: true });
+	}
+});
+
+test("replay names a test inside a suite, and says so when given the suite", () => {
+	const repo = repository();
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), "export default {}");
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 0");
+		const base = repo.commit();
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 1");
+		writeFileSync(join(repo.root, "probe.cjs"), [
+			'const { describe, it } = require("node:test");',
+			'describe("counter", () => it("reads one", () => require("node:assert/strict").equal(require("./value.cjs"), 1, "stored value")));',
+		].join("\n"));
+		repo.commit();
+		const inner = repo.replay(base, "probe.cjs");
+		assert.equal(inner.status, 0, inner.stdout + inner.stderr);
+		const suite = repo.replay(base, "probe.cjs", "counter");
+		assert.equal(suite.status, 1);
+		assert.equal(JSON.parse(suite.stdout).base.detail, '"counter" is a suite: name the test inside it that makes the assertion');
+	} finally {
+		repo.remove();
+	}
+});
+
+test("replay refuses a setup that isn't a command and its arguments", () => {
+	const repo = repository();
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), 'export default { replay: { setup: "npm ci" } }');
+		writeFileSync(join(repo.root, "probe.cjs"), PROBE);
+		const base = repo.commit();
+		const result = repo.replay(base, "probe.cjs");
+		assert.equal(result.status, 1);
+		assert.equal(result.stdout, "");
+		assert.match(result.stderr, /replay\.setup in marram\.config\.mjs must be a command and its arguments/);
+	} finally {
+		repo.remove();
 	}
 });

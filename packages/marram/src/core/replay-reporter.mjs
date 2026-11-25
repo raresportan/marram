@@ -4,7 +4,7 @@ export default async function* observations(events) {
 		const error = data.details.error;
 		yield JSON.stringify({
 			name: data.name, passed: type === "test:pass", skipped: Boolean(data.skip || data.todo),
-			code: error?.cause?.code, message: error?.message,
+			code: error?.cause?.code, failureType: error?.failureType, message: error?.message,
 		}) + "\n";
 	}
 }

@@ -30,7 +30,7 @@ function probe({ name, cwd, command, file, from, to, expected }) {
 	const path = join(scratch, file);
 	const clean = readFileSync(path, "utf8");
 	if (clean.split(from).length !== 2) throw new Error(`${name}: fixture no longer matches exactly once in ${file}`);
-	writeFileSync(path, clean.replace(from, to));
+	writeFileSync(path, clean.replace(from, () => to));
 	try {
 		run(cwd, command, expected);
 		console.log(`✓ ${name}: clean control passed, fault detected (${Date.now() - start} ms)`);
@@ -49,8 +49,8 @@ try {
 		if (entry !== "@raresportan" && entry !== ".bin") symlinkSync(join(root, "node_modules", entry), join(deps, entry));
 	}
 	// The same entries, resolved from the copy, so a command such as `marram` runs the copy under test, not the original:
-	// a link keeps its relative target, and a wrapper script (npm's shims on Windows) is copied, since it finds its
-	// package relative to itself.
+	// a link keeps its relative target, and a wrapper script (as some package managers write) is copied, since it finds
+	// its package relative to itself.
 	mkdirSync(join(deps, ".bin"));
 	for (const entry of readdirSync(join(root, "node_modules/.bin"))) {
 		const from = join(root, "node_modules/.bin", entry);
