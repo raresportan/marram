@@ -250,6 +250,23 @@ Skipped tests, setup errors, other failures, and checks that pass on both revisi
 If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
 Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.
 
+### Typed Electron IPC
+
+Declare operations with the argument and reply types in shared code, for example
+`defineIpc("counter", { increment: operation<() => number>() })`. Import both helpers from
+`@raresportan/marram/electron/ipc`. In the host, call `contract.handle(register, handlers)` with a handler
+for each operation. In preload, `contract.client(invoke)` builds the matching promise-returning methods.
+Tally's counter demonstrates both Electron adapters. The contract checks TypeScript callers and handlers at build
+time, not at run time, so validate untrusted arguments in the handlers. `register` receives each channel's handler,
+which takes Electron's event first, so it is the place to check the sender:
+
+```ts
+counterIpc.handle((channel, handler) => ipcMain.handle(channel, (event, ...args) => {
+	if (event.senderFrame?.url !== trustedUrl) throw new Error(`${channel} from an untrusted frame`);
+	return handler(event, ...args);
+}), handlers);
+```
+
 ## Credit
 
 The approach, and terms such as the trust ladder and the feature map, come from Lauren Tan's talk ["here's how i shipped
@@ -258,7 +275,7 @@ Marram is a separate project, with no code from it.
 
 ## What Marram doesn't do
 
-- **It has no runtime.** There's no feature discovery, typed IPC or routing. The folder convention is enforced by rules,
+- **It has no runtime.** Feature discovery and routing are project-owned. Electron projects can opt into the typed IPC helper. The folder convention is enforced by rules,
   and you wire the features up yourself.
 - **It can't judge.** The commit lint checks that a class and a rung are named, not that they're right.
 - **Hooks can be skipped.** `--no-verify` skips them. There's no server-side enforcement unless your CI runs the gate.
