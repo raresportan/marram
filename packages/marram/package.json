@@ -14,6 +14,9 @@
     "marram": "bin/marram.mjs"
   },
   "exports": {
+    "./core/run": "./src/core/run.mjs",
+    "./core/feature-map": "./src/core/feature-map.mjs",
+    "./core/journey-lint": "./src/core/journey-lint.mjs",
     "./core/boundaries": "./src/core/boundaries.mjs",
     "./core/check-lint": "./src/core/check-lint.mjs",
     "./core/no-comments": "./src/core/no-comments.mjs",

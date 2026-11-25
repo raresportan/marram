@@ -9,11 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
 
-export interface Check {
-	readonly label: string;
-	readonly ok: boolean;
-	readonly detail?: string;
-}
+import type { Check } from "../core/run.mjs";
+export type { Check } from "../core/run.mjs";
 
 export interface JourneyOptions {
 	/** Where screenshots and the report go. */

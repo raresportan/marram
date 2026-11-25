@@ -8,7 +8,7 @@ import { lintCommits } from "../src/core/commit-lint.mjs";
 import { replay } from "../src/core/replay.mjs";
 import { reviewSummary } from "../src/core/review-summary.mjs";
 import { load } from "../src/core/config.mjs";
-import { mapDiff } from "../src/electron/map-diff.mjs";
+import { mapDiff } from "../src/core/map-diff.mjs";
 import { gate } from "../src/core/gate.mjs";
 import { hook } from "../src/core/hook.mjs";
 

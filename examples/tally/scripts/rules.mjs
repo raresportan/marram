@@ -6,7 +6,7 @@ import { importBoundaries, importsOf } from "@raresportan/marram/core/boundaries
 import { lintChecks } from "@raresportan/marram/core/check-lint";
 import { comments } from "@raresportan/marram/core/no-comments";
 import { finish, parse, ratchet, restrict, sourceFiles } from "@raresportan/marram/core/ratchet";
-import { lintJourneys } from "@raresportan/marram/electron/journey-lint";
+import { lintJourneys } from "@raresportan/marram/core/journey-lint";
 import { FIX, lintPromises } from "@raresportan/marram/node/promise-lint";
 import { acquisitions } from "@raresportan/marram/node/resource-lint";
 import { effectSets } from "@raresportan/marram/react/effect-lint";
