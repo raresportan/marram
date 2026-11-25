@@ -1,1 +1,1 @@
-export { CHANNELS, type CounterApi } from "./api.ts";
+export { counterIpc, type CounterApi } from "./api.ts";

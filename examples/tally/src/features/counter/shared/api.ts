@@ -1,10 +1,11 @@
-export const CHANNELS = { read: "counter:read", increment: "counter:increment" } as const;
+import { defineIpc, operation } from "@raresportan/marram/electron/ipc";
 
-/** What the renderer may ask of the counter. */
-export interface CounterApi {
-	read(): Promise<number>;
-	increment(): Promise<number>;
-}
+export const counterIpc = defineIpc("counter", {
+	read: operation<() => number>(),
+	increment: operation<() => number>(),
+});
+
+export type CounterApi = ReturnType<typeof counterIpc.client>;
 
 declare global {
 	interface Window {

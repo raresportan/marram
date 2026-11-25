@@ -30,6 +30,7 @@
     "./electron/geometry": "./src/electron/geometry.ts",
     "./electron/journey-lint": "./src/electron/journey-lint.mjs",
     "./electron/run": "./src/electron/run.ts",
+    "./electron/ipc": "./src/electron/ipc.ts",
     "./electron/session": "./src/electron/session.ts"
   },
   "scripts": {
