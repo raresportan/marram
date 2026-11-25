@@ -1,10 +1,10 @@
 // Judging a journey, and refusing a stale build. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { failed, judge, staleInput } from "../../src/electron/run.ts";
+import { failed, judge, runJourneys, staleInput } from "../../src/electron/run.ts";
 
 const session = ({ checks = [{ label: "x", ok: true }], unsettled = [], pageErrors = [] } = {}) => ({ checks, unsettled: new Set(unsettled), pageErrors });
 
@@ -37,5 +37,24 @@ test("a build is stale when any of its inputs is newer than its oldest output, o
 		assert.equal(staleInput(root, [{ outputs: [join(root, "missing.js")], inputs: [join(root, "src")] }]), join("src", "deep", "a.ts"));
 	} finally {
 		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a full run requires the cited restart check even when the other checks pass", async () => {
+	const evidence = mkdtempSync(join(tmpdir(), "marram-observations-"));
+	try {
+		const path = join(evidence, "map.md");
+		writeFileSync(path, '- **Counting**\n  - ✅ counts › "survives restart"');
+		const checkRestart = (s) => s.checks.push({ label: "survives restart", ok: true });
+		const options = {
+			chosen: ["counts"], evidence, featureMap: { path },
+			open: () => ({ ...session(), dispose: async () => {} }),
+			run: async () => {},
+		};
+		assert.equal(await runJourneys(options), false);
+		assert.match(readFileSync(join(evidence, "missing-citations.json"), "utf8"), /survives restart/);
+		assert.equal(await runJourneys({ ...options, run: async (_, s) => checkRestart(s) }), true);
+	} finally {
+		rmSync(evidence, { recursive: true, force: true });
 	}
 });

@@ -2,8 +2,9 @@
 // awaited (it ended before the check was recorded, so it couldn't fail it), or checking nothing (it would pass
 // whatever the app does). Journeys run the build, not the sources, so a build older than its sources is refused: a
 // source changed since would go untested while its journey passed.
-import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { mapCitations } from "./map-citations.mjs";
 import type { Check, JourneySession } from "./session.ts";
 
 /** A build: the files it writes, and the files and folders it's made from. */
@@ -39,11 +40,12 @@ export const failed = (result: Result): boolean => result.error !== undefined ||
  * Run each of `chosen` with a session `open` makes for it (given its evidence folder under `evidence`), and write
  * `report.json` there. Whether they all passed.
  */
-export async function runJourneys<S extends JourneySession>({ chosen, run, open, evidence }: {
+export async function runJourneys<S extends JourneySession>({ chosen, run, open, evidence, featureMap }: {
 	chosen: readonly string[];
 	run: (journey: string, session: S) => Promise<void>;
 	open: (journey: string, evidence: string) => S;
 	evidence: string;
+	featureMap?: { path: string; custom?: readonly RegExp[] };
 }): Promise<boolean> {
 	const results: Result[] = [];
 	for (const journey of chosen) {
@@ -61,10 +63,24 @@ export async function runJourneys<S extends JourneySession>({ chosen, run, open,
 		}
 		results.push(judge(journey, session, error));
 	}
+	const missing: string[] = [];
+	if (featureMap) {
+		for (const { feature, citation } of mapCitations(readFileSync(featureMap.path, "utf8"))) {
+			if (featureMap.custom?.some((pattern) => pattern.test(citation))) continue;
+			const match = /^([\w-]+)(?: › "(.+)")?$/.exec(citation);
+			const result = results.find((row) => row.journey === match?.[1]);
+			const label = match?.[2];
+			if (result && !failed(result) && (!label || result.checks.some((check) => check.ok && check.label === label))) continue;
+			const observed = result?.checks.filter((check) => check.ok).map((check) => check.label).join(", ");
+			missing.push(`${feature} expected ${citation}. Passed checks: ${observed || "(none)"}`);
+		}
+		writeFileSync(join(evidence, "missing-citations.json"), JSON.stringify(missing, null, 2));
+		for (const problem of missing) console.error(`  ✗ ${problem}`);
+	}
 	const failures = results.filter(failed);
 	writeFileSync(join(evidence, "report.json"), JSON.stringify(results, null, 2));
 	console.log(`\n${results.length - failures.length}/${results.length} journeys passed. Evidence: ${evidence}`);
-	return failures.length === 0;
+	return failures.length === 0 && missing.length === 0;
 }
 
 /** A journey's result, from its session once it ended, and the error it ended with, if any. */

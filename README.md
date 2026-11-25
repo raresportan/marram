@@ -225,6 +225,18 @@ journey runs the build, and a change it hasn't seen would pass.
 `checkFeatureMap` fails when a cited check doesn't exist, or a feature doesn't say how it's verified. A known gap is a
 `❌` line, left visible.
 
+## Beyond the tutorial
+
+### Runtime evidence for a feature map
+
+Pass `featureMap: { path }` to `runJourneys` when running the whole map. Each journey citation must resolve to a
+passing journey in that run, and each named check must appear among its passed observations. The runner records gaps in
+`missing-citations.json` beside the normal report. Use the static feature-map check for partial runs. For custom
+citations verified by another checker, supply their patterns in `featureMap.custom`.
+
+Run `marram map-diff origin/main docs/feature-map.md` from the project root in PR review to list verification
+obligations removed since the merge base. Removals are informational so a maintainer can review intentional changes.
+
 ## Credit
 
 The approach, and terms such as the trust ladder and the feature map, come from Lauren Tan's talk ["here's how i shipped
