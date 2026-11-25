@@ -6,6 +6,7 @@
 // whole journey), a project's own citations (`✅ server › <script>.ts`), or `❌ <why it isn't verified>`.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { featureOf, mapLines, statusOf } from "./map-citations.mjs";
 
 /** Check names per function in the journey sources (`<session>.check("…")`); `${…}` in a name matches anything. */
 function checksByFunction(folder, session) {
@@ -52,18 +53,18 @@ export function readFeatureMap({ map, folder, journeys, citations = [], session 
 	const checksOf = (journey) => [...(byFunction.get(journeys[journey].run.name) ?? []), ...helpers];
 	const broken = [];
 	const features = [];
-	for (const [index, line] of readFileSync(map, "utf8").split("\n").entries()) {
-		const feature = /^\s*- \*\*(.+?)\*\*/.exec(line);
-		const status = /^\s*- (✅|❌) (.*)$/.exec(line);
-		if (feature !== null)
-			features.push({ name: feature[1], statuses: [] });
-		else if (status === null)
+	for (const [index, line] of mapLines(readFileSync(map, "utf8")).entries()) {
+		const feature = featureOf(line);
+		const status = statusOf(line);
+		if (feature !== undefined)
+			features.push({ name: feature, statuses: [] });
+		else if (status === undefined)
 			continue;
 		else if (features.length === 0)
 			broken.push(`line ${index + 1}: a status outside any feature`);
 		else {
-			features.at(-1).statuses.push(status[1]);
-			const problem = status[1] === "✅" ? brokenCitation(status[2], journeys, checksOf, citations) : undefined;
+			features.at(-1).statuses.push(status.mark);
+			const problem = status.mark === "✅" ? brokenCitation(status.text, journeys, checksOf, citations) : undefined;
 			if (problem !== undefined)
 				broken.push(`line ${index + 1}: ${problem}`);
 		}
