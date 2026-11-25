@@ -2,7 +2,7 @@
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -26,6 +26,7 @@ function project({ prePush } = {}) {
 	};
 	const marram = (args, input = "") => spawnSync("node", [BIN, ...args], { cwd: root, input, encoding: "utf8" });
 	return {
+		root,
 		commit,
 		runs: () => (existsSync(join(root, "runs")) ? readFileSync(join(root, "runs"), "utf8") : ""),
 		push: (sha) => marram(["hook", "pre-push"], `refs/heads/main ${sha} refs/heads/main ${"0".repeat(40)}\n`),
@@ -94,6 +95,24 @@ test("gate.prePush names a gate a push can require", () => {
 		const refused = repo.push(repo.commit("one"));
 		assert.equal(refused.status, 1);
 		assert.match(refused.stderr, /a push can require the default gate or the full one/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a nested project's full pass cannot satisfy the root project's finish hook", () => {
+	const repo = project();
+	try {
+		const nested = join(repo.root, "example");
+		mkdirSync(nested);
+		copyFileSync(join(repo.root, "marram.config.mjs"), join(nested, "marram.config.mjs"));
+		repo.commit("one");
+		const full = spawnSync("node", [BIN, "gate", "full"], { cwd: nested, encoding: "utf8" });
+		assert.equal(full.status, 0, full.stderr);
+		assert.equal(repo.finish().status, 0);
+		assert.equal(repo.runs(), "d", "finish must run the root project's stage");
+		assert.equal(repo.finish().status, 0);
+		assert.equal(repo.runs(), "d", "finish reuses the root project's own pass");
 	} finally {
 		repo.remove();
 	}

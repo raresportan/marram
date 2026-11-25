@@ -22,6 +22,10 @@ if (turn.startsWith("pause")) {
 	spawn("sh", ["-c", "sleep ${(GAP_MS + 500) / 1000}; kill -CONT " + process.ppid], { detached: true, stdio: "ignore" }).unref();
 	process.kill(process.ppid, "SIGSTOP");
 }
+if (turn.endsWith("fail")) {
+	console.error("not ok: expected the counter to persist");
+	console.error("observed zero");
+}
 process.exit(turn.endsWith("ok") ? 0 : 1);
 `;
 
@@ -71,6 +75,7 @@ test("a failure with no sleep isn't run again", async () => {
 	assert.equal(code, 1, output);
 	assert.equal(runs, 1);
 	assert.doesNotMatch(output, /slept/);
+	assert.match(output, /Gate failed at stage\.\s+not ok: expected the counter to persist\nobserved zero/);
 });
 
 test("a stage that passed after a sleep isn't run again", async () => {

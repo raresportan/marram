@@ -12,7 +12,8 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const TIERS = ["fast", "default", "full"];
 
@@ -61,12 +62,12 @@ export async function gate(root, config, [tier = "default"]) {
 		};
 		const clock = setInterval(noticeSleep, 1000);
 		const code = await new Promise((done) => {
-			child.on("error", () => done(1));
-			child.on("exit", (exit) => done(exit ?? 1));
+			child.on("error", (error) => log.write(error.message + "\n"));
+			child.on("close", (exit) => done(exit ?? 1));
 		});
 		clearInterval(clock);
 		noticeSleep();
-		log.end();
+		await new Promise((done) => log.end(done));
 		const seconds = Math.round((Date.now() - started) / 1000);
 		report.stages.push({ name, code, seconds });
 		await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
@@ -76,8 +77,9 @@ export async function gate(root, config, [tier = "default"]) {
 
 	// A fast pass doesn't make a change done, so only the default and full gates record a verdict.
 	const tree = tier === "fast" ? undefined : treeOf(root);
+	const project = tree === undefined ? undefined : projectTreeKey(root, tree);
 	const verdict = (passed, extra = {}) => {
-		if (tree !== undefined) updateState(root, (state) => { state.trees[verdictKey(tree, tier)] = { passed, tier, at: Date.now(), ...extra }; });
+		if (project !== undefined) updateState(root, (state) => { state.trees[verdictKey(project, tier)] = { passed, tier, at: Date.now(), ...extra }; });
 	};
 
 	console.log(`Gate (${tier}). Logs: ${dir}`);
@@ -93,8 +95,11 @@ export async function gate(root, config, [tier = "default"]) {
 			process.exit(1);
 		}
 		if (!passed) {
-			verdict(false, { stage: stage.name, log: join(dir, `${stage.name}.log`) });
+			const log = join(dir, `${stage.name}.log`);
+			verdict(false, { stage: stage.name, log });
 			console.log(`\nGate failed at ${stage.name}.`);
+			const excerpt = failureExcerpt(log);
+			if (excerpt) console.log(excerpt);
 			process.exit(1);
 		}
 	}

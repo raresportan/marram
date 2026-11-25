@@ -12,20 +12,27 @@ import ts from "typescript";
 
 /**
  * Problems with `found` sites (`{ key, at, what }`: the entry that would allow it, where it is, what it does) against
- * the `allowed` list (`{ key: reason }`, kept in `list`). `stale` says why a listed key no longer matches: a phrase, or a
+ * the `allowed` list (entries are a reason or `{ count, reason }`, kept in `list`). `stale` says why a listed key no longer matches: a phrase, or a
  * function of the key.
  */
 export function ratchet({ list, allowed, found, fix, stale }) {
 	const problems = [];
-	const seen = new Set();
+	const counts = new Map();
 	const why = typeof stale === "function" ? stale : () => stale;
 	for (const site of found) {
-		if (Object.hasOwn(allowed, site.key)) seen.add(site.key);
+		if (Object.hasOwn(allowed, site.key)) counts.set(site.key, (counts.get(site.key) ?? 0) + (site.count ?? 1));
 		else problems.push(`${site.at} ${site.what}: ${fix}, or list it in ${list} with why`);
 	}
-	for (const [key, reason] of Object.entries(allowed)) {
+	for (const [key, entry] of Object.entries(allowed)) {
+		const counted = entry !== null && typeof entry === "object";
+		const reason = counted ? entry.reason : entry;
 		if (typeof reason !== "string" || reason.trim() === "") problems.push(`${key} is listed in ${list} without a reason: say why it's safe`);
-		if (!seen.has(key)) problems.push(`${key} ${why(key)}: remove it from ${list}`);
+		const actual = counts.get(key) ?? 0;
+		if (actual === 0) problems.push(`${key} ${why(key)}: remove it from ${list}`);
+		if (!counted) continue;
+		if (!Number.isSafeInteger(entry.count) || entry.count < 1) problems.push(`${key} needs a positive integer count in ${list}`);
+		else if (actual > entry.count) problems.push(`${key} has ${actual} matches, allowance ${entry.count}: ${fix}`);
+		else if (actual > 0 && actual < entry.count) problems.push(`${key} has ${actual} matches: lower its count from ${entry.count} to ${actual} in ${list}`);
 	}
 	return problems;
 }
@@ -57,7 +64,7 @@ export function restrict({ root, folder, owners = [], find, allowed, list, fix, 
 		const sites = find(parse(file));
 		if (sites.length === 0) continue;
 		const what = [...new Set(sites.map((site) => site.what))].join(", ");
-		found.push({ key, at: `${folder}/${key}:${sites[0].line}`, what });
+		found.push({ key, count: sites.length, at: `${folder}/${key}:${sites[0].line}`, what });
 	}
 	return ratchet({ list, allowed, found, fix, stale: (key) => (existsSync(join(base, key)) ? stale : "is gone") });
 }

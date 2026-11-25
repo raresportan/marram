@@ -20,22 +20,41 @@ export function classesIn(doc) {
 	return [...doc.matchAll(/^\| \*\*([A-Za-z0-9-]+)\*\*/gm)].map(([, name]) => name);
 }
 
-/** What's wrong with a commit message, if anything, given the project's classes and rungs. */
-export function problems(message, { classes, rungs = RUNGS }) {
+/** The finding blocks of a review-fix commit, using its whole body when there are no bullets. */
+export function reviewFindings(message) {
 	const lines = message.split("\n").filter((line) => !line.startsWith("#"));
 	const subject = lines[0] ?? "";
 	if (!REVIEW_FIX.test(subject) || subject.startsWith("Merge ")) return [];
-	const one = `(?:${classes.join("|")})`;
-	const named = new RegExp(`\\bClass: (?:${one}(?:\\/${one})*|new)\\b[^\\n]*?\\bRung: (?:(?:${rungs.join("|")})\\b|none, because \\S)`);
 	const body = lines.slice(1);
 	const findings = [];
 	for (const line of body) {
 		if (line.startsWith("- ")) findings.push([line]);
 		else findings.at(-1)?.push(line);
 	}
+	return findings.length ? findings : [body];
+}
+
+/** Git log's NUL-separated commit hashes and messages, newest first. */
+export function commitsIn(root, range) {
+	const fields = execFileSync("git", ["log", "-z", "--format=%H%x00%B", "--end-of-options", range, "--"], {
+		cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+	}).split("\0");
+	const commits = [];
+	for (let i = 0; i + 1 < fields.length; i += 2) commits.push([fields[i], fields[i + 1]]);
+	return commits;
+}
+
+/** What's wrong with a commit message, if anything, given the project's classes and rungs. */
+export function problems(message, { classes, rungs = RUNGS }) {
+	const findings = reviewFindings(message);
+	const one = `(?:${classes.join("|")})`;
+	const named = new RegExp(`\\bClass: (?:${one}(?:\\/${one})*|new)\\b[^\\n]*?\\bRung: (?:(?:${rungs.join("|")})\\b|none, because \\S)`);
 	const example = `\`Class: <${classes[0]}-${classes.at(-1)}>. Rung: <kind> …\``;
-	if (findings.length === 0) return named.test(body.join("\n")) ? [] : [`it fixes review findings but names no class and rung: add ${example}`];
-	return findings.flatMap((finding) => (named.test(finding.join("\n")) ? [] : [`"${finding[0].slice(2, 72)}" names no class and rung: add ${example}`]));
+	return findings.flatMap((finding) => {
+		if (named.test(finding.join("\n"))) return [];
+		const label = finding[0]?.startsWith("- ") ? `"${finding[0].slice(2, 72)}"` : "it fixes review findings but";
+		return [`${label} names no class and rung: add ${example}`];
+	});
 }
 
 export function lintCommits(root, config, [mode, target]) {
@@ -43,7 +62,7 @@ export function lintCommits(root, config, [mode, target]) {
 	const rules = { classes: classesIn(readFileSync(join(root, doc), "utf8")), rungs: config.review.rungs };
 	if (rules.classes.length === 0) throw new Error(`${doc} lists no classes: its table rows start with | **<name>**`);
 	const messages = mode === "--range"
-		? execFileSync("git", ["log", "--format=%H%x00%B%x01", target], { cwd: root, encoding: "utf8" }).split("\x01").filter((entry) => entry.trim() !== "").map((entry) => entry.trim().split("\x00"))
+		? commitsIn(root, target)
 		: mode === undefined ? [] : [["this commit", readFileSync(mode, "utf8")]];
 	const found = messages.flatMap(([commit, message]) => problems(message, rules).map((problem) => `${commit.slice(0, 12)}: ${problem}`));
 	if (found.length > 0) {

@@ -64,3 +64,29 @@ test("restrict finds sites per file, skips the owners, and tells a gone file fro
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("a counted file allowance tracks individual finder matches", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-count-"));
+	try {
+		const run = (matches, allowance) => {
+			writeFileSync(join(root, "old.ts"), "danger();\n".repeat(matches));
+			return restrict({
+				root, folder: ".", list: "rules", allowed: { "old.ts": allowance },
+				find: (source) => source.statements.map((node) => ({ line: lineOf(source, node), what: "calls danger" })),
+				fix: "use Scope", stale: "no longer calls danger",
+			});
+		};
+		const entry = { reason: "pending migration", count: 3 };
+		assert.deepEqual(run(3, entry), []);
+		assert.match(run(4, entry)[0], /4 matches, allowance 3: use Scope/);
+		assert.match(run(2, entry)[0], /lower its count from 3 to 2/);
+		assert.match(run(0, entry)[0], /remove it from rules/);
+		assert.match(run(3, { ...entry, reason: " " })[0], /without a reason/);
+		for (const count of [0, -1, 1.5, "3", undefined]) {
+			assert.match(run(3, { ...entry, count })[0], /positive integer/);
+		}
+		assert.deepEqual(run(4, "file-level exception"), []);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

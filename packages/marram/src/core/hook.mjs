@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { git, treeOf, updateState, verdictOf, readState } from "./gate-state.mjs";
+import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const MAX_SENT_BACK = 3;
 const MARRAM = join(import.meta.dirname, "..", "..", "bin", "marram.mjs");
@@ -31,13 +32,7 @@ async function judge(root, tree, show, tier = "default") {
 /** What an agent is told when the gate fails: where it failed, and the end of that stage's log. */
 function failure(verdict) {
 	if (verdict.stage === undefined) return "The gate didn't pass: files changed while it ran. Run `marram gate` and fix what fails.";
-	// From the first failure line when there is one (a test runner's "not ok", a check's ✗), else the end of the log.
-	let tail = "";
-	try {
-		const lines = readFileSync(verdict.log, "utf8").trimEnd().split("\n");
-		const first = lines.findIndex((line) => /^\s*(not ok|✗)/.test(line));
-		tail = (first === -1 ? lines.slice(-60) : lines.slice(first, first + 60)).join("\n");
-	} catch {}
+	const tail = failureExcerpt(verdict.log);
 	return [
 		`The gate failed at ${verdict.stage}${verdict.reused ? " (the verdict on this exact code, from a run in the last 15 minutes)" : ""}, so this isn't done.`,
 		"Fix the cause, not the check, then finish again. `marram gate` reruns it.",
