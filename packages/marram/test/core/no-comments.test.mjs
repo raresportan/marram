@@ -26,6 +26,10 @@ test("text that looks like a comment isn't one", () => {
 	assert.deepEqual(found("const a = '// not one'; const b = `/* nor this */`;"), []);
 	const jsx = (code) => comments(ts.createSourceFile("x.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)).map(({ line }) => line);
 	assert.deepEqual(jsx("const a = <p>see // here, /* and here */</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>// not one</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>\n\t// not one\n</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>{x}/* not one */<b>a</b>// nor this</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>{/* one */}</p>;\nconst b = <p>hi</p>; // and one"), [1, 2]);
 });
 
 test("a comment inside an expression, after a token rather than a node, is flagged", () => {

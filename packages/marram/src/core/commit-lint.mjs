@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const REVIEW_FIX = /\b(?:(?:code )?review|PR|pull request)(?:'s)? (?:findings?|gaps?|comments|feedback|notes|nits|suggestions)\b|\b(?:address|apply|resolve|handle)(?:e?s|e?d|ing)? (?:the |all )?(?:review|feedback|nits)\b/i;
+const REVIEW_FIX = /\b(?:(?:code )?review|PR|pull request)(?:'s)? (?:findings?|gaps?|comments|feedback|notes|nits|suggestions)\b|\b(?:address(?:es|ed|ing)?|appl(?:y|ies|ied|ying)|resolv(?:e[sd]?|ing)|handl(?:e[sd]?|ing)) (?:the |all )?(?:review|feedback|nits)\b/i;
 const RUNGS = ["type", "lint", "architecture", "check", "journey", "unit"];
 
 /** The class names in a mistake-classes doc: each table row that starts with a bold name. */

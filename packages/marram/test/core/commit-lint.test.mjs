@@ -34,7 +34,7 @@ test("other commits, merges and git's comment lines aren't held to it", () => {
 });
 
 test("a fix for review comments, PR feedback or nits is a review fix too, by whatever words", () => {
-	for (const subject of ["Address PR feedback", "Fix review comments on the store", "Apply code review suggestions", "Resolve the nits", "Addressed feedback from Sam", "Handle pull request notes"]) {
+	for (const subject of ["Address PR feedback", "Fix review comments on the store", "Apply code review suggestions", "Resolve the nits", "Addressed feedback from Sam", "Handle pull request notes", "Applied feedback from Sam", "Applies review", "Applying the nits", "Handling nits", "Handles feedback", "Resolving review", "Resolves all feedback", "Addressing review"]) {
 		assert.equal(problems(`${subject}\n\n- X.\n`).length, 1, subject);
 	}
 	for (const subject of ["Post one sticky PR comment", "Add a review step to CI", "Feedback form layout", "Review the docs"]) {

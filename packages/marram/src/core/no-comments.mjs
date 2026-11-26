@@ -29,8 +29,12 @@ export function comments(source) {
 			ranges.set(pos, range);
 		}
 	};
+	// JSX text is read by the JavaScript lexer when TypeScript looks for comments after a tag or a `{…}`, so `<p>// x</p>`
+	// would seem to hold one: what starts in JSX text isn't a comment.
+	const text = [];
 	// Through every token as well as every node: a comment after `=` or `(` trails a token, not a node.
 	const visit = (node) => {
+		if (node.kind === ts.SyntaxKind.JsxText) text.push([node.getFullStart(), node.getEnd()]);
 		look(ts.getLeadingCommentRanges(source.text, node.getFullStart()), documents(node));
 		look(ts.getTrailingCommentRanges(source.text, node.getEnd()), false);
 		for (const child of node.getChildren(source)) visit(child);
@@ -38,6 +42,7 @@ export function comments(source) {
 	visit(source);
 	return [...ranges.values()]
 		.sort((a, b) => a.pos - b.pos)
+		.filter(({ pos }) => !text.some(([start, end]) => pos >= start && pos < end))
 		.filter(({ pos, end, doc }) => {
 			const text = source.text.slice(pos, end);
 			return !(doc && isDocComment(text)) && !hasLink(text) && !isLicense(text, pos);
