@@ -263,18 +263,19 @@ A change can weaken the checks that judge it and still pass them: move a journey
 or add a flag to the script a stage runs. Run `marram guard-diff origin/main` in PR review to see what the branch
 changed in its guards since the merge base:
 
-- each project's gate tiers (every `marram.config.mjs` in the repository): stages removed, added, or running a
-  different command, and where a removed stage still runs;
+- each project's gate tiers (every `marram.config.mjs` in the repository, including one deleted): stages removed,
+  added, reordered, or running different arguments, and where a removed stage still runs;
 - `env` changes, by variable name only, since a value may be a token;
 - `gate.prePush`;
 - the `package.json` scripts a stage runs, including through `-w`;
-- the files in `core.hooksPath`;
-- citations removed from each feature map named with `--map <path>`.
+- the files in `core.hooksPath`, tracked or not;
+- citations removed from each feature map named with `--map <path>`, relative to where you run it.
 
 Like map-diff, it reports and exits 0, leaving the decision to the reviewer. It doesn't read test files or follow a
 script into the scripts it runs, so a test deleted or skipped inside a stage, or a journey a script stops choosing,
-doesn't appear. Configurations are imported from a temporary checkout of the merge base, so one that imports a
-dependency may not load there; the output says which.
+doesn't appear. Each configuration is evaluated in its own process, from its project folder in a temporary checkout of
+the merge base or in the working tree, so each side reads its own files. A temporary checkout has no `node_modules`,
+so a configuration that imports a dependency may not load there; the output says which, and compares the rest.
 
 ### Replay a regression on two revisions
 

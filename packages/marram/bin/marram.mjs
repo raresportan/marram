@@ -15,7 +15,12 @@ import { gate } from "../src/core/gate.mjs";
 import { hook } from "../src/core/hook.mjs";
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { gate, hook, replay, "guard-diff": guardDiff, "map-diff": mapDiff, "commit-lint": lintCommits, "review-summary": reviewSummary };
+const commands = { gate, hook, replay, "map-diff": mapDiff, "commit-lint": lintCommits, "review-summary": reviewSummary };
+// guard-diff starts from the repository: a project's configuration may be what the branch deleted or broke.
+if (command === "guard-diff") {
+	await guardDiff(process.cwd(), args);
+	process.exit(0);
+}
 if (!(command in commands)) {
 	console.error("Usage: marram guard-diff <base> [--map <map>]… | marram replay <base> <test-file> <test-name> <expected assertion message> | marram map-diff <base> <map> | marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>]");
 	process.exit(1);

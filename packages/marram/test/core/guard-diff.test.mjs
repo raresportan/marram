@@ -40,6 +40,12 @@ function repository() {
 	git("checkout", "-qb", "change");
 	return {
 		root, write, config, rootGate, appGate, appScripts,
+		/** Fold the changes so far into main, so the test's own change starts from them. */
+		commit: () => {
+			git("add", "-A");
+			git("-c", "user.name=test", "-c", "user.email=test@example.org", "commit", "-qm", "base");
+			git("branch", "-f", "main", "HEAD");
+		},
 		diff: (...args) => spawnSync(process.execPath, [BIN, "guard-diff", "main", ...args], { cwd: root, encoding: "utf8" }),
 		remove: () => rmSync(root, { recursive: true, force: true }),
 	};
@@ -124,6 +130,85 @@ test("guard-diff says which configuration it couldn't load, and still compares t
 		assert.equal(result.status, 0, result.stderr);
 		assert.match(result.stdout, /^packages\/app\n {2}couldn't load marram\.config\.mjs in the working tree: /m);
 		assert.match(result.stdout, /prePush: full → default/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("each side's configuration reads its own files, from its own project folder", () => {
+	const repo = repository();
+	try {
+		const reads = 'import { readFileSync } from "node:fs";\nexport default { gate: { logs: "logs", tiers: JSON.parse(readFileSync("tiers.json", "utf8")) } };\n';
+		repo.write("marram.config.mjs", reads);
+		repo.write("tiers.json", JSON.stringify(repo.rootGate.tiers));
+		repo.commit();
+		repo.write("tiers.json", JSON.stringify({ ...repo.rootGate.tiers, default: [] }));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^\(root\)\n {2}default: removed app: npm run gate -w app$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a deleted root configuration is reported as its gates removed, and a broken one doesn't hide the others", () => {
+	const repo = repository();
+	try {
+		rmSync(join(repo.root, "marram.config.mjs"));
+		const deleted = repo.diff();
+		assert.equal(deleted.status, 0, deleted.stderr);
+		assert.match(deleted.stdout, /^\(root\)\n {2}default: removed app: npm run gate -w app\n {2}prePush: full → default$/m);
+		repo.write("marram.config.mjs", "export default {");
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, full: [] } }));
+		const broken = repo.diff();
+		assert.equal(broken.status, 0, broken.stderr);
+		assert.match(broken.stdout, /^\(root\)\n {2}couldn't load marram\.config\.mjs in the working tree: /m);
+		assert.match(broken.stdout, /^ {2}full: removed unit: npm test \(still in default\)$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a command is compared argument by argument, and shown with each argument's boundaries", () => {
+	const repo = repository();
+	try {
+		const smoke = (...args) => ({ name: "smoke", run: ["npm", "run", ...args] });
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers: { ...repo.rootGate.tiers, full: [smoke("smoke regression")] } }));
+		repo.commit();
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers: { ...repo.rootGate.tiers, full: [smoke("smoke", "regression")] } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}full: smoke now runs npm run smoke regression \(was npm run 'smoke regression'\)$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("stages are compared in order, each occurrence of a repeated name on its own", () => {
+	const repo = repository();
+	try {
+		const unit = repo.appGate.tiers.default[0];
+		const journeys = repo.appGate.tiers.default[1];
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, full: [unit, unit, journeys] } }));
+		repo.commit();
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [journeys, unit], full: [unit, journeys] } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}default: order now journeys, unit \(was unit, journeys\)$/m);
+		assert.match(result.stdout, /^ {2}full: removed unit: npm test \(still in default\)$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a project whose path git would quote is compared, and an untracked hook is reported", () => {
+	const repo = repository();
+	try {
+		repo.write("café/marram.config.mjs", repo.config({ tiers: { fast: [], default: [{ name: "unit", run: ["npm", "test"] }], full: [] } }));
+		repo.commit();
+		repo.write("café/marram.config.mjs", repo.config({ tiers: { fast: [], default: [], full: [] } }));
+		repo.write(".githooks/commit-msg", "exec marram commit-lint \"$1\"\n");
+		const result = repo.diff();
+		assert.match(result.stdout, /^café\n {2}default: removed unit: npm test$/m);
+		assert.match(result.stdout, /^Hooks \(\.githooks\)\n {2}added commit-msg$/m);
 	} finally {
 		repo.remove();
 	}
