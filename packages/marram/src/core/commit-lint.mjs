@@ -2,7 +2,9 @@
 // project's mistake-classes doc, `review.classes` in marram.config.mjs). Without that, review findings only ever produce
 // point fixes: nobody sees that a class keeps recurring, or that no rung could have caught it.
 //
-// Applies to a commit whose subject fixes review findings or gaps. Each top-level bullet (`- `) of its body is one
+// Applies to a commit whose subject fixes review findings: one that names review findings, gaps, comments, feedback,
+// notes, nits or suggestions (also PR or pull request ones), or that addresses, applies, resolves or handles review or
+// feedback. A project with its own wording sets `review.subjects` to a pattern. Each top-level bullet (`- `) of its body is one
 // finding and needs a line `Class: <a class, joined by / if between two, or new>. Rung: <a rung | none, because …> …`.
 // A body with no bullets needs one such line. The classes are the doc's table rows (`| **A**: …`); the rungs are
 // `review.rungs`.
@@ -12,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const REVIEW_FIX = /\breview (findings?|gaps?)\b/i;
+const REVIEW_FIX = /\b(?:(?:code )?review|PR|pull request)(?:'s)? (?:findings?|gaps?|comments|feedback|notes|nits|suggestions)\b|\b(?:address|apply|resolve|handle)(?:e?s|e?d|ing)? (?:the |all )?(?:review|feedback|nits)\b/i;
 const RUNGS = ["type", "lint", "architecture", "check", "journey", "unit"];
 
 /** The class names in a mistake-classes doc: each table row that starts with a bold name. */
@@ -20,11 +22,20 @@ export function classesIn(doc) {
 	return [...doc.matchAll(/^\| \*\*([A-Za-z0-9-]+)\*\*/gm)].map(([, name]) => name);
 }
 
+/** The pattern a review fix's subject matches: the project's `review.subjects`, if it sets one. */
+export function subjectsOf(config) {
+	const subjects = config.review?.subjects;
+	if (subjects === undefined) return REVIEW_FIX;
+	if (!(subjects instanceof RegExp)) throw new Error("review.subjects in marram.config.mjs is a RegExp, the subjects of review-fix commits");
+	// Tested once per subject: a global or sticky pattern would carry its position from one to the next.
+	return new RegExp(subjects.source, subjects.flags.replace(/[gy]/g, ""));
+}
+
 /** The finding blocks of a review-fix commit, using its whole body when there are no bullets. */
-export function reviewFindings(message) {
+export function reviewFindings(message, subjects = REVIEW_FIX) {
 	const lines = message.split("\n").filter((line) => !line.startsWith("#"));
 	const subject = lines[0] ?? "";
-	if (!REVIEW_FIX.test(subject) || subject.startsWith("Merge ")) return [];
+	if (!subjects.test(subject) || subject.startsWith("Merge ")) return [];
 	const body = lines.slice(1);
 	const findings = [];
 	for (const line of body) {
@@ -45,8 +56,8 @@ export function commitsIn(root, range) {
 }
 
 /** What's wrong with a commit message, if anything, given the project's classes and rungs. */
-export function problems(message, { classes, rungs = RUNGS }) {
-	const findings = reviewFindings(message);
+export function problems(message, { classes, rungs = RUNGS, subjects }) {
+	const findings = reviewFindings(message, subjects);
 	const one = `(?:${classes.join("|")})`;
 	const named = new RegExp(`\\bClass: (?:${one}(?:\\/${one})*|new)\\b[^\\n]*?\\bRung: (?:(?:${rungs.join("|")})\\b|none, because \\S)`);
 	const example = `\`Class: <${classes[0]}-${classes.at(-1)}>. Rung: <kind> …\``;
@@ -59,7 +70,7 @@ export function problems(message, { classes, rungs = RUNGS }) {
 
 export function lintCommits(root, config, [mode, target]) {
 	const doc = config.review.classes;
-	const rules = { classes: classesIn(readFileSync(join(root, doc), "utf8")), rungs: config.review.rungs };
+	const rules = { classes: classesIn(readFileSync(join(root, doc), "utf8")), rungs: config.review.rungs, subjects: subjectsOf(config) };
 	if (rules.classes.length === 0) throw new Error(`${doc} lists no classes: its table rows start with | **<name>**`);
 	const messages = mode === "--range"
 		? commitsIn(root, target)

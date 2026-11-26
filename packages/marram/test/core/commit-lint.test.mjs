@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { classesIn, problems as against } from "../../src/core/commit-lint.mjs";
+import { classesIn, subjectsOf, problems as against } from "../../src/core/commit-lint.mjs";
 
 const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const rules = { classes: ["A", "B", "C", "D", "E", "F", "G", "H"] };
@@ -31,6 +31,23 @@ test("other commits, merges and git's comment lines aren't held to it", () => {
 	assert.deepEqual(problems("Add a button\n\n- X.\n"), []);
 	assert.deepEqual(problems("Merge pull request #9 from x/fix/review-findings\n"), []);
 	assert.deepEqual(problems("Fix review findings\n\n- X.\n  Class: B. Rung: type (ContainedPath)\n# Please enter the commit message\n# - a comment bullet\n"), []);
+});
+
+test("a fix for review comments, PR feedback or nits is a review fix too, by whatever words", () => {
+	for (const subject of ["Address PR feedback", "Fix review comments on the store", "Apply code review suggestions", "Resolve the nits", "Addressed feedback from Sam", "Handle pull request notes"]) {
+		assert.equal(problems(`${subject}\n\n- X.\n`).length, 1, subject);
+	}
+	for (const subject of ["Post one sticky PR comment", "Add a review step to CI", "Feedback form layout", "Review the docs"]) {
+		assert.deepEqual(problems(`${subject}\n\n- X.\n`), [], subject);
+	}
+});
+
+test("a project words its review fixes with review.subjects", () => {
+	const own = { ...rules, subjects: subjectsOf({ review: { subjects: /^Rework after QA\b/g } }) };
+	assert.equal(against("Rework after QA\n\n- X.\n", own).length, 1);
+	assert.equal(against("Rework after QA\n\n- X.\n", own).length, 1);
+	assert.deepEqual(against("Fix review findings\n\n- X.\n", own), []);
+	assert.throws(() => subjectsOf({ review: { subjects: "Rework" } }), /review\.subjects .* is a RegExp/);
 });
 
 test("the classes are the project's: its doc's table rows, and its rungs", () => {

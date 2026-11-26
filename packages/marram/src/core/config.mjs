@@ -8,7 +8,11 @@
 //       tiers: { fast: [stage, …], default: [stage, …], full: [stage, …] },  // stage: { name, run: [command, …args], env? }
 //       prePush: "full",   // the gate a push must pass (marram hook pre-push): "default" unless set
 //     },
-//     review: { classes: "the mistake-classes doc", rungs: ["type", "lint", …] },
+//     review: {
+//       classes: "the mistake-classes doc",
+//       rungs: ["type", "lint", …],
+//       subjects: /the subjects of commits that fix review findings/,   // review findings, PR feedback, nits… unless set
+//     },
 //   };
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
