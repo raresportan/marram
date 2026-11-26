@@ -213,3 +213,49 @@ test("a project whose path git would quote is compared, and an untracked hook is
 		repo.remove();
 	}
 });
+
+test("a stage's workspace is found in each revision, so swapped package names show the script that now runs", () => {
+	const repo = repository();
+	try {
+		const integration = { name: "integration", run: ["npm", "test", "-w", "app"] };
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers: { ...repo.rootGate.tiers, full: [integration] } }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { test: "node smoke.mjs" } }));
+		repo.commit();
+		repo.write("packages/app/package.json", JSON.stringify({ name: "other", scripts: repo.appScripts }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "app", scripts: { test: "node smoke.mjs" } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}script test \(packages\/other\/package\.json, was packages\/app\/package\.json\): node smoke\.mjs \(was node --test\)$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a configuration that prints while it loads is still read", () => {
+	const repo = repository();
+	try {
+		repo.write("marram.config.mjs", `console.log("loading config");\nconsole.error("loading config");\n${repo.config({ ...repo.rootGate, prePush: "default" })}`);
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^\(root\)\n {2}prePush: full → default$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a removed stage is said to still run elsewhere only where the same command runs with the same environment", () => {
+	const elsewhere = {
+		"another command": { name: "journeys", run: ["npm", "run", "lint"], env: { TOKEN: "first-secret" } },
+		"another environment": { name: "journeys", run: ["npm", "run", "verify"], env: { TOKEN: "second-secret" } },
+	};
+	for (const [difference, journeys] of Object.entries(elsewhere)) {
+		const repo = repository();
+		try {
+			const unit = repo.appGate.tiers.default[0];
+			repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { fast: [], default: [unit], full: [unit, journeys] } }));
+			const result = repo.diff();
+			assert.match(result.stdout, /^ {2}default: removed journeys: npm run verify$/m, difference);
+		} finally {
+			repo.remove();
+		}
+	}
+});

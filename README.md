@@ -264,10 +264,12 @@ or add a flag to the script a stage runs. Run `marram guard-diff origin/main` in
 changed in its guards since the merge base:
 
 - each project's gate tiers (every `marram.config.mjs` in the repository, including one deleted): stages removed,
-  added, reordered, or running different arguments, and where a removed stage still runs;
+  added, reordered, or running different arguments, and where a removed stage still runs with the same arguments and
+  `env`;
 - `env` changes, by variable name only, since a value may be a token;
 - `gate.prePush`;
-- the `package.json` scripts a stage runs, including through `-w`;
+- the `package.json` scripts a stage runs, including through `-w`, each found in its own revision, so a workspace
+  renamed under an unchanged command shows the script that now runs;
 - the files in `core.hooksPath`, tracked or not;
 - citations removed from each feature map named with `--map <path>`, relative to where you run it.
 

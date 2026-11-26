@@ -73,7 +73,8 @@ function compareProject(before, now, project) {
 		const [old, current] = [occurrences(was.tiers[tier]), occurrences(is.tiers[tier])];
 		for (const [key, stage] of old) {
 			if (current.has(key)) continue;
-			const still = TIERS.filter((other) => other !== tier && is.tiers[other].some((s) => s.name === stage.name));
+			// Only where the same arguments run with the same environment: a stage of the same name may check something else.
+			const still = TIERS.filter((other) => other !== tier && is.tiers[other].some((s) => runs(s) === runs(stage)));
 			lines.push(`${tier}: removed ${stage.name}: ${shown(stage.run)}${still.length > 0 ? ` (still in ${still.join(", ")})` : ""}`);
 		}
 		for (const [key, stage] of current) if (!old.has(key)) lines.push(`${tier}: added ${stage.name}: ${shown(stage.run)}`);
@@ -91,9 +92,13 @@ function compareProject(before, now, project) {
 		if (kept.join("\0\0") !== keptNow.join("\0\0")) lines.push(`${tier}: order now ${keptNow.map((key) => current.get(key).name).join(", ")} (was ${kept.map((key) => old.get(key).name).join(", ")})`);
 	}
 	if (was.prePush !== is.prePush) lines.push(`prePush: ${was.prePush} → ${is.prePush}`);
-	lines.push(...scriptChanges(before, now, project, TIERS.flatMap((tier) => [...was.tiers[tier], ...is.tiers[tier]])));
+	const all = (gate) => TIERS.flatMap((tier) => gate.tiers[tier]);
+	lines.push(...scriptChanges(before, now, project, all(was), all(is)));
 	return lines;
 }
+
+/** What a stage runs: its arguments and its environment. */
+const runs = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
 
 /** A tier's stages by name and occurrence (the second stage named "test" is "test" 2), in order. */
 function occurrences(stages) {
@@ -106,31 +111,34 @@ function occurrences(stages) {
 }
 
 // Run in a process of its own, from the project's folder, so a configuration that reads files relative to where it
-// runs reads its own side's, and each side's modules are loaded fresh.
+// runs reads its own side's, and each side's modules are loaded fresh. The answer goes to file descriptor 3, so what a
+// configuration prints as it loads can't be mistaken for it.
 const READ_GATE = `
+import { writeSync } from "node:fs";
+const answer = (value) => writeSync(3, JSON.stringify(value));
 try {
 	const gate = (await import(process.argv[1])).default?.gate ?? {};
 	const stages = (tier) => (Array.isArray(gate.tiers?.[tier]) ? gate.tiers[tier] : []).map(({ name, run, env }) => ({ name: String(name), run: Array.isArray(run) ? run.map(String) : [], env }));
-	process.stdout.write(JSON.stringify({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default" }));
+	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default" });
 } catch (error) {
-	process.stderr.write(String(error?.message ?? error).split("\\n")[0]);
-	process.exit(1);
+	answer({ error: String(error?.message ?? error).split("\\n")[0] });
 }`;
 
 /** `{ tiers, prePush }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
 function gateIn(top, project, where) {
 	const folder = join(top, project);
 	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default" };
-	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000 });
-	if (result.status === 0) return JSON.parse(result.stdout);
-	return { error: `couldn't load ${CONFIG} ${where}: ${result.stderr.trim() || result.error?.message || "it didn't finish"}` };
+	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000, stdio: ["ignore", "ignore", "ignore", "pipe"] });
+	const answer = result.output?.[3] ? JSON.parse(result.output[3]) : { error: result.error?.message ?? "it exited without giving its gate" };
+	return answer.error === undefined ? answer : { error: `couldn't load ${CONFIG} ${where}: ${answer.error}` };
 }
 
 /**
- * Changes to the package scripts `stages` run: a script of the stage's package (its workspace, named by -w or
- * --workspace, or else the project's own) whose name is one of the stage's arguments.
+ * Changes to the package scripts the stages run, found in each revision on its own: a script of the stage's package
+ * (its workspace, named by -w or --workspace, or else the project's own) whose name is one of the stage's arguments.
+ * A stage that runs on one side only is the tiers' to report.
  */
-function scriptChanges(before, now, project, stages) {
+function scriptChanges(before, now, project, wasStages, isStages) {
 	const scriptsAt = (top, folder) => {
 		try {
 			return JSON.parse(readFileSync(join(top, folder, "package.json"), "utf8")).scripts ?? {};
@@ -138,26 +146,33 @@ function scriptChanges(before, now, project, stages) {
 			return {};
 		}
 	};
-	const used = new Map();
-	for (const { run } of stages) {
-		const folder = workspaceOf(now, project, run) ?? project;
-		const names = used.get(folder) ?? new Set();
-		const scripts = { ...scriptsAt(before, folder), ...scriptsAt(now, folder) };
-		for (const arg of run.slice(1)) if (Object.hasOwn(scripts, arg)) names.add(arg);
-		used.set(folder, names);
-	}
-	const lines = [];
-	for (const [folder, names] of used) {
-		const [was, is] = [scriptsAt(before, folder), scriptsAt(now, folder)];
-		const where = posix.join(folder, "package.json");
-		for (const name of [...names].sort()) {
-			if (was[name] === is[name]) continue;
-			if (is[name] === undefined) lines.push(`script ${name} (${where}): removed (was ${was[name]})`);
-			else if (was[name] === undefined) lines.push(`script ${name} (${where}): added: ${is[name]}`);
-			else lines.push(`script ${name} (${where}): ${is[name]} (was ${was[name]})`);
+	/** Each stage's command and script name, to the package.json that holds that script and what it runs. */
+	const resolve = (top, stages) => {
+		const found = new Map();
+		for (const { run } of stages) {
+			const folder = workspaceOf(top, project, run) ?? project;
+			const scripts = scriptsAt(top, folder);
+			for (const name of run.slice(1)) if (Object.hasOwn(scripts, name)) found.set(JSON.stringify([run, name]), { name, where: posix.join(folder, "package.json"), body: scripts[name] });
+		}
+		return found;
+	};
+	const [was, is] = [resolve(before, wasStages), resolve(now, isStages)];
+	const commands = (stages) => new Set(stages.map(({ run }) => JSON.stringify(run)));
+	const [ranBefore, runsNow] = [commands(wasStages), commands(isStages)];
+	const lines = new Set();
+	for (const [key, old] of was) {
+		const current = is.get(key);
+		if (current === undefined) {
+			if (runsNow.has(JSON.stringify(JSON.parse(key)[0]))) lines.add(`script ${old.name} (${old.where}): removed (was ${old.body})`);
+		} else if (current.where !== old.where || current.body !== old.body) {
+			const where = current.where === old.where ? current.where : `${current.where}, was ${old.where}`;
+			lines.add(`script ${current.name} (${where}): ${current.body}${current.body === old.body ? "" : ` (was ${old.body})`}`);
 		}
 	}
-	return lines;
+	for (const [key, current] of is) {
+		if (!was.has(key) && ranBefore.has(JSON.stringify(JSON.parse(key)[0]))) lines.add(`script ${current.name} (${current.where}): added: ${current.body}`);
+	}
+	return [...lines].sort();
 }
 
 /** The folder (from the repository root) of the workspace `run` names with -w or --workspace, by path or package name. */
