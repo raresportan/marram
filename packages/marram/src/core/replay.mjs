@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node
 import { dirname, join, relative, sep } from "node:path";
 import { checkoutAt, repoPath, scratchFolder } from "./checkout.mjs";
 import { spawnable } from "./command.mjs";
+import { replayProblems } from "./config.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
@@ -19,13 +20,11 @@ function staysInside(folder, path) {
 export function replay(root, config, args) {
 	const [baseRef, file, name, assertion] = args;
 	if (args.length !== 4 || args.some((value) => !value)) throw new Error("Usage: marram replay <base> <test-file> <test-name> <expected assertion message>");
+	const [problem] = replayProblems(config.replay ?? {});
+	if (problem !== undefined) throw new Error(problem);
 	const setup = config.replay?.setup;
-	if (setup !== undefined && (!Array.isArray(setup) || setup.length === 0 || !setup.every((part) => typeof part === "string" && part !== ""))) {
-		throw new Error('replay.setup in marram.config.mjs must be a command and its arguments, as in ["npm", "ci"]');
-	}
 	// For the setup and for the test, on each side: one that hangs would otherwise hold replay forever.
 	const timeoutMs = config.replay?.timeoutMs ?? 300_000;
-	if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("replay.timeoutMs in marram.config.mjs must be a positive number of milliseconds");
 	const repo = git(root, "rev-parse", "--show-toplevel");
 	const project = repoPath(root);
 	const path = repoPath(root, file);

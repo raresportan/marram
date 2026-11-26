@@ -83,6 +83,12 @@ is kept in its own log. On failure the terminal shows up to 60 lines starting at
 60 lines when the log has no marker. A stage that fails after the machine slept during it runs again, because that failure says
 nothing about the code.
 
+Logs go in `gate.logs`, `.verify` unless set, one folder per run. The newest 20 runs are kept and older ones removed;
+`gate.keep` sets how many (`Infinity` keeps them all). Only the gate's own `gate-<tier>-<time>` folders are removed.
+
+Every command checks the whole config when it loads it. A misspelled key (`gate.tiers.defualt`, with the key it's likely
+meant to be) or a value of the wrong kind (a stage's `run` given as one string) is listed, and nothing runs.
+
 ### 2. The hooks
 
 ```sh

@@ -1,19 +1,20 @@
 // The gate running a real stage: a failure counts unless the machine slept during it.
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { pruneLogs } from "../../src/core/gate.mjs";
 
 const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const GAP_MS = 2500;
 
 // Each run takes its turn from the plan: `pause` stops the gate past the gap and wakes it again, standing in for sleep.
 const STAGE = `
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const runs = existsSync("runs") ? readFileSync("runs", "utf8").length : 0;
 appendFileSync("runs", ".");
@@ -87,4 +88,48 @@ test("a stage that passed after a sleep isn't run again", PAUSES, async () => {
 	const { code, output, runs } = await gate("pause-ok,fail");
 	assert.equal(code, 0, output);
 	assert.equal(runs, 1);
+});
+
+test("only the newest runs' log folders are kept, whatever their tier, and nothing else in the folder is touched", async () => {
+	const logs = mkdtempSync(join(tmpdir(), "marram-logs-"));
+	try {
+		const runs = Array.from({ length: 6 }, (_, i) => `gate-${["fast", "default", "full"][i % 3]}-2026-11-0${i + 1}T08-00-00-000Z`);
+		for (const run of runs) mkdirSync(join(logs, run));
+		for (const other of ["evidence", "gate-notes", "gate-full-yesterday"]) mkdirSync(join(logs, other));
+		writeFileSync(join(logs, "gate-fast-2026-10-01T08-00-00-000Z"), "a file, not a run");
+		await pruneLogs(logs, 4);
+		assert.deepEqual(readdirSync(logs).sort(), [...runs.slice(2), "evidence", "gate-fast-2026-10-01T08-00-00-000Z", "gate-full-yesterday", "gate-notes"].sort());
+		await pruneLogs(join(logs, "missing"), 1);
+	} finally {
+		rmSync(logs, { recursive: true, force: true });
+	}
+});
+
+test("the gate keeps gate.keep runs' logs, its own among them", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-keep-"));
+	try {
+		writeFileSync(join(root, "marram.config.mjs"), 'export default { gate: { logs: "logs", keep: 2, tiers: { fast: [{ name: "ok", run: ["node", "-e", ""] }] } } };');
+		mkdirSync(join(root, "logs", "gate-full-2020-01-01T00-00-00-000Z"), { recursive: true });
+		const dirs = [];
+		for (let i = 0; i < 3; i++) {
+			const result = spawnSync("node", [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
+			assert.equal(result.status, 0, result.stderr);
+			dirs.push(/Logs: .*[\\/](gate-[^\\/\s]+)/.exec(result.stdout)[1]);
+		}
+		assert.deepEqual(readdirSync(join(root, "logs")).sort(), dirs.slice(1).sort());
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("without gate.logs, the gate's logs go in .verify", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-logs-"));
+	try {
+		writeFileSync(join(root, "marram.config.mjs"), 'export default { gate: { tiers: { fast: [{ name: "ok", run: ["node", "-e", ""] }] } } };');
+		const result = spawnSync("node", [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+		assert.equal(readdirSync(join(root, ".verify")).length, 1);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
