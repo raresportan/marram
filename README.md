@@ -344,10 +344,10 @@ root, and each is taken back out with its files' times restored before the next 
 build tool doesn't see stale sources.
 
 A linked path must exist in the working tree and be ignored there. It's shared, not copied, and git refuses a patch
-that reaches through it. A linked folder that has links in it, such as `node_modules` with its workspace packages, its
-scopes and `.bin`, is made again in the copy. Each of its links that leads into the repository leads to the same place
-in the copy instead, so a fault patched into a workspace package is the one its check loads. Links nested deeper, in a
-folder whose own entries are not links, still lead to the working tree.
+that reaches through it. A linked folder with links in it, such as `node_modules` with its workspace packages, scopes
+and `.bin`, is made again in the copy. Each of its links that leads into the repository leads to the same place in the
+copy instead, so a fault patched into a workspace package is the one its check loads. A folder counts when it has a
+link in it or one level below, as scoped packages do. Links nested deeper still lead to the working tree.
 
 Marram probes three of its own guards this way, in the full gate: a shared cache verdict across nested projects, a
 missing IPC handler, and a restart check left in an uncalled helper. The patches are in `probes/`. They need the same

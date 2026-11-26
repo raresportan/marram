@@ -157,25 +157,32 @@ test("a fault leaves the copy as it found it, file times included, for the next 
 const patchOf = (path, from, to) => [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, "@@ -1 +1 @@", `-${from}`, `+${to}`, ""].join("\n");
 
 test("a linked folder's links into the repository lead into the copy, so a patched workspace package is the one checked", () => {
+	// Only scoped packages and .bin: no link directly in node_modules.
 	const faults = [
 		'{ name: "a relative link", patch: "probes/lib.patch", run: ["node", "check-lib.cjs"], expect: /lib value/ }',
 		'{ name: "an absolute link", patch: "probes/lib.patch", run: ["node", "check-scoped.cjs"], expect: /scoped value/ }',
+		'{ name: "a .bin link", patch: "probes/lib.patch", run: ["node", "node_modules/.bin/tool"], expect: /tool value/ }',
 	];
 	const repo = project(faults.join(", "), 'link: ["node_modules"],');
 	try {
 		repo.write("packages/lib/index.cjs", "module.exports = 1;\n");
 		repo.write("probes/lib.patch", patchOf("packages/lib/index.cjs", "module.exports = 1;", "module.exports = 0;"));
-		repo.write("check-lib.cjs", 'require("dep");\nrequire("node:assert/strict").equal(require("lib"), 1, "lib value");\n');
+		repo.write("check-lib.cjs", 'require("dep");\nrequire("node:assert/strict").equal(require("@rel/lib"), 1, "lib value");\n');
+		repo.write("packages/lib/tool.cjs", 'require("node:assert/strict").equal(require("./index.cjs"), 1, "tool value");\n');
 		repo.write("check-scoped.cjs", 'require("node:assert/strict").equal(require("@scope/lib"), 1, "scoped value");\n');
 		repo.write("node_modules/dep/index.cjs", "module.exports = true;\n");
 		repo.write("node_modules/dep/package.json", JSON.stringify({ main: "index.cjs" }));
 		repo.write("packages/lib/package.json", JSON.stringify({ main: "index.cjs" }));
-		symlinkSync("../packages/lib", join(repo.root, "node_modules/lib"));
+		mkdirSync(join(repo.root, "node_modules/@rel"));
+		symlinkSync("../../packages/lib", join(repo.root, "node_modules/@rel/lib"));
+		mkdirSync(join(repo.root, "node_modules/.bin"));
+		symlinkSync("../@rel/lib/tool.cjs", join(repo.root, "node_modules/.bin/tool"));
 		mkdirSync(join(repo.root, "node_modules/@scope"));
 		symlinkSync(join(repo.root, "packages/lib"), join(repo.root, "node_modules/@scope/lib"));
 		const result = repo.probe();
 		assert.match(result.stdout, /^✓ a relative link: caught/m, result.stdout + result.stderr);
 		assert.match(result.stdout, /^✓ an absolute link: caught/m);
+		assert.match(result.stdout, /^✓ a \.bin link: caught/m);
 		assert.equal(readFileSync(join(repo.root, "packages/lib/index.cjs"), "utf8"), "module.exports = 1;\n", "the working tree's package is untouched");
 	} finally {
 		repo.remove();
@@ -211,6 +218,36 @@ test("a patch that renames a file puts it back with its times", () => {
 		repo.write("check.cjs", CHECK + fresh);
 		const move = ["diff --git a/source.txt b/moved.txt", "similarity index 100%", "rename from source.txt", "rename to moved.txt", patchOf("value.cjs", "module.exports = 1;", "module.exports = 0;")].join("\n");
 		repo.write("probes/move.patch", move);
+		const result = repo.probe();
+		assert.match(result.stdout, /^✓ a moved source: caught/m, result.stdout + result.stderr);
+		assert.match(result.stdout, /^✓ a stored zero: caught/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a missing patch is inconclusive, and the faults after it still run", () => {
+	const missing = '{ name: "a lost patch", patch: "probes/lost.patch", run: ["node", "check.cjs"], expect: /stored value/ }';
+	const repo = project(`${missing}, ${BY_COMMAND}`);
+	try {
+		const result = repo.probe();
+		assert.equal(result.status, 1);
+		assert.match(result.stdout, /^\? a lost patch: inconclusive: the patch no longer applies/m, result.stdout + result.stderr);
+		assert.match(result.stdout, /^✓ a stored zero: caught/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a patch with Windows line endings has its renamed files' times put back too", () => {
+	const fresh = 'const { statSync } = require("node:fs");\nif (statSync("source.txt").mtimeMs > statSync("ready").mtimeMs) throw new Error("stale build");\n';
+	const moved = '{ name: "a moved source", patch: "probes/move.patch", run: ["node", "check.cjs"], expect: /stored value/ }';
+	const repo = project(`${moved}, ${BY_COMMAND}`, 'setup: ["node", "-e", "require(\\"node:fs\\").writeFileSync(\\"ready\\", \\"\\")"],');
+	try {
+		repo.write("source.txt", "source\n");
+		repo.write("check.cjs", CHECK + fresh);
+		const move = ["diff --git a/source.txt b/moved.txt", "similarity index 100%", "rename from source.txt", "rename to moved.txt", ""].join("\r\n");
+		repo.write("probes/move.patch", move + patchOf("value.cjs", "module.exports = 1;", "module.exports = 0;"));
 		const result = repo.probe();
 		assert.match(result.stdout, /^✓ a moved source: caught/m, result.stdout + result.stderr);
 		assert.match(result.stdout, /^✓ a stored zero: caught/m);

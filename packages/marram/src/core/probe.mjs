@@ -84,9 +84,9 @@ export function probe(root, config, names) {
 }
 
 /**
- * `source` from the working tree at `target` in the copy, shared rather than copied. A file or a folder with no links
- * directly in it is one link to the original. A folder with links in it (a node_modules folder, its scopes, .bin) is
- * made again in the copy, each entry shared the same way, and each link that leads into the repository is pointed at
+ * `source` from the working tree at `target` in the copy, shared rather than copied. A file, or a folder with no links
+ * within two levels of it, is one link to the original. A folder with links that near (a node_modules folder whose
+ * workspace packages are all scoped has them only in its scopes and .bin) is made again in the copy, each entry shared the same way, and each link that leads into the repository is pointed at
  * the same place in the copy: otherwise a workspace package linked from node_modules would be the working tree's, and a
  * fault patched into the copy's would go unchecked. Its plain files are copied, since a wrapper script in .bin finds its
  * package relative to itself.
@@ -100,7 +100,7 @@ function share(source, target, repo, copy) {
 		const inside = relative(realpathSync(repo), leadsTo);
 		const intoRepo = inside !== ".." && !inside.startsWith(".." + sep) && !isAbsolute(inside);
 		symlinkSync(intoRepo ? relative(dirname(target), join(copy, inside)) : leadsTo, target);
-	} else if (entry.isDirectory() && readdirSync(source, { withFileTypes: true }).some((child) => child.isSymbolicLink())) {
+	} else if (entry.isDirectory() && hasLink(source, 2)) {
 		mkdirSync(target);
 		for (const child of readdirSync(source, { withFileTypes: true })) {
 			if (child.isFile()) cpSync(join(source, child.name), join(target, child.name), { preserveTimestamps: true });
@@ -109,6 +109,12 @@ function share(source, target, repo, copy) {
 	} else {
 		symlinkSync(source, target);
 	}
+}
+
+/** Whether `folder` has a link in it, or within `levels` levels of folders below it. */
+function hasLink(folder, levels) {
+	const children = readdirSync(folder, { withFileTypes: true });
+	return children.some((child) => child.isSymbolicLink()) || (levels > 1 && children.some((child) => child.isDirectory() && hasLink(join(folder, child.name), levels - 1)));
 }
 
 /** The faults `names` picks (all of them when it's empty), each checked for what a fault needs. */
@@ -172,7 +178,9 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 function touchedBy(copy, patch) {
 	const listed = spawnSync("git", ["apply", "--numstat", "-z", patch], { cwd: copy, encoding: "utf8" }).stdout ?? "";
 	const files = listed.split("\0").map((row) => row.split("\t")[2]).filter(Boolean);
-	for (const line of readFileSync(patch, "utf8").split("\n")) if (line.startsWith("rename from ")) files.push(unquoted(line.slice("rename from ".length)));
+	// A missing patch touches nothing: git apply then says it doesn't apply, and the fault is inconclusive.
+	const text = existsSync(patch) ? readFileSync(patch, "utf8") : "";
+	for (const line of text.split(/\r?\n/)) if (line.startsWith("rename from ")) files.push(unquoted(line.slice("rename from ".length)));
 	return files;
 }
 
