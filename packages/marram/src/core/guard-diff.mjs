@@ -5,11 +5,10 @@
 // core.hooksPath, the tests in changed test files (test-inventory.mjs), and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
 // repository rather than a project's configuration, so a configuration deleted or broken is reported, not fatal.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, posix } from "node:path";
 import { pathToFileURL } from "node:url";
-import { checkoutAt } from "./checkout.mjs";
+import { checkoutAt, scratchFolder } from "./checkout.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { removedCitations } from "./map-diff.mjs";
 import { isTestFile, testsIn } from "./test-inventory.mjs";
@@ -30,7 +29,7 @@ export async function guardDiff(cwd, args) {
 	const maps = rest.filter((_, i) => i % 2 === 1);
 	const repo = git(cwd, "rev-parse", "--show-toplevel");
 	const ancestor = git(repo, "merge-base", git(repo, "rev-parse", "--verify", "--end-of-options", base + "^{commit}"), "HEAD");
-	const scratch = mkdtempSync(join(tmpdir(), "marram-guard-diff-"));
+	const scratch = scratchFolder("marram-guard-diff-");
 	const sections = [];
 	try {
 		const before = join(scratch, "base");

@@ -13,6 +13,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const TIERS = ["fast", "default", "full"];
@@ -63,7 +64,9 @@ export async function gate(root, config, [tier = "default"]) {
 	async function runStage({ name, run: [command, ...args], env = {} }) {
 		const started = Date.now();
 		const log = createWriteStream(join(dir, `${name}.log`));
-		const child = spawn(command, args, { cwd: root, env: { ...outsideGit, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+		const stageEnv = { ...outsideGit, ...env };
+		const run = spawnable(command, args, { cwd: root, env: stageEnv });
+		const child = spawn(run.file, run.args, { ...run.options, cwd: root, env: stageEnv, stdio: ["ignore", "pipe", "pipe"] });
 		running = child;
 		child.stdout.pipe(log, { end: false });
 		child.stderr.pipe(log, { end: false });

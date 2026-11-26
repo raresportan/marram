@@ -1,0 +1,2 @@
+# Text files keep LF endings everywhere, so a probe's patch applies on a Windows checkout too.
+* text=auto eol=lf

@@ -6,8 +6,9 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 
 /** A stage that notes its run in an ignored file, then exits with `code`. */
 const stage = (name, { code = 0, env } = {}) => ({ name, run: ["node", "-e", `require("fs").appendFileSync("runs", ${JSON.stringify(name)}); process.exit(${code})`], ...(env ? { env } : {}) });

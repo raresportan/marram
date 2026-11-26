@@ -6,8 +6,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const GAP_MS = 2500;
 
 // Each run takes its turn from the plan: `pause` stops the gate past the gap and wakes it again, standing in for sleep.
@@ -28,6 +29,10 @@ if (turn.endsWith("fail")) {
 }
 process.exit(turn.endsWith("ok") ? 0 : 1);
 `;
+
+// Sleep is stood in for with SIGSTOP and SIGCONT, which Windows doesn't have; the gate's own check, a gap between
+// timer ticks, doesn't need them.
+const PAUSES = { skip: process.platform === "win32" && "stands in for sleep with SIGSTOP, which Windows doesn't have" };
 
 async function gate(plan) {
 	const root = mkdtempSync(join(tmpdir(), "marram-gate-"));
@@ -52,7 +57,7 @@ async function gate(plan) {
 	}
 }
 
-test("a stage that failed while the machine slept runs again, and its pass counts", async () => {
+test("a stage that failed while the machine slept runs again, and its pass counts", PAUSES, async () => {
 	const { code, output, runs, logs, report } = await gate("pause-fail,ok");
 	assert.equal(code, 0, output);
 	assert.equal(runs, 2);
@@ -63,7 +68,7 @@ test("a stage that failed while the machine slept runs again, and its pass count
 	assert.deepEqual(report.stages.map((stage) => stage.code), [1, 0]);
 });
 
-test("a stage that fails again with no sleep fails the gate", async () => {
+test("a stage that fails again with no sleep fails the gate", PAUSES, async () => {
 	const { code, output, runs } = await gate("pause-fail,fail");
 	assert.equal(code, 1, output);
 	assert.equal(runs, 2);
@@ -78,7 +83,7 @@ test("a failure with no sleep isn't run again", async () => {
 	assert.match(output, /Gate failed at stage\.\s+not ok: expected the counter to persist\nobserved zero/);
 });
 
-test("a stage that passed after a sleep isn't run again", async () => {
+test("a stage that passed after a sleep isn't run again", PAUSES, async () => {
 	const { code, output, runs } = await gate("pause-ok,fail");
 	assert.equal(code, 0, output);
 	assert.equal(runs, 1);

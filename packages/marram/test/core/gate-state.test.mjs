@@ -32,7 +32,8 @@ test("a same-size edit in the second its file was staged changes the tree, at an
 	}
 });
 
-test("an index replaced while it's copied doesn't lend the copy its newer time", () => {
+// Windows won't rename over a file that's open, so git can't replace the index while it's being copied there.
+test("an index replaced while it's copied doesn't lend the copy its newer time", { skip: process.platform === "win32" && "the race can't happen on Windows" }, () => {
 	const dir = mkdtempSync(join(tmpdir(), "marram-index-"));
 	try {
 		const [real, copy] = [join(dir, "index"), join(dir, "copy")];

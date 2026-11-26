@@ -6,7 +6,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
 
 import type { Check } from "../core/run.mjs";
@@ -27,7 +28,7 @@ export interface JourneyOptions {
 export interface Launch {
 	/** The Electron (or packaged app) executable. */
 	readonly executablePath: string;
-	/** The app's main script, imported by the bootstrap once the profile is set. */
+	/** The app's main script (a path, or a URL), imported by the bootstrap once the profile is set. */
 	readonly main: string;
 	/** Extra environment for the main process. */
 	readonly env?: Record<string, string>;
@@ -85,7 +86,8 @@ export class JourneySession {
 						]
 					: []),
 				...prelude,
-				`await import(${JSON.stringify(main)});`,
+				// As a URL: import() reads a Windows path (D:\…) as a URL with a "d:" scheme.
+				`await import(${JSON.stringify(isAbsolute(main) ? pathToFileURL(main).href : main)});`,
 			].join("\n"),
 		);
 		this.app = await electron.launch({ executablePath, args: [bootstrap], env: { ...process.env, ...env } as Record<string, string> });

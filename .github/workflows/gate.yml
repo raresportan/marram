@@ -1,5 +1,5 @@
-# The full gate on every pull request and on main, so a green result doesn't depend on the author's machine or on
-# hooks that `--no-verify` skips. For a pull request, also what it changed in the checks that judge it (guard-diff).
+# The full gate on every pull request and on main, on Linux and on Windows, so a green result doesn't depend on the
+# author's machine or on hooks that `--no-verify` skips. For a pull request, also what it changed in the checks that judge it (guard-diff).
 name: Gate
 
 on:
@@ -16,8 +16,13 @@ concurrency:
 
 jobs:
   gate:
-    name: Full gate
-    runs-on: ubuntu-24.04
+    name: Full gate (${{ matrix.os }})
+    strategy:
+      # One platform failing doesn't hide how the other did.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -30,10 +35,11 @@ jobs:
       # Ubuntu 24.04 restricts unprivileged user namespaces, which Chromium's sandbox needs: without this Electron
       # exits before Tally's first journey opens a window.
       - name: Let Electron's sandbox start
+        if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Full gate
-        # Electron needs a display; xvfb-run gives it one.
-        run: xvfb-run --auto-servernum npm run gate:full
+        # Electron needs a display: xvfb-run gives it one on Linux, and Windows has its own.
+        run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum ' || '' }}npm run gate:full
         env:
           # A cold runner builds and starts Electron more slowly than a laptop.
           PROBE_TIMEOUT_MS: "600000"
@@ -41,7 +47,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-logs
+          name: gate-logs-${{ matrix.os }}
           path: |
             .verify/
             examples/tally/.verify/

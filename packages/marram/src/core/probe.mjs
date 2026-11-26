@@ -20,10 +20,10 @@
 // at the repository root. `expect` is a RegExp, or a string the output must contain. A `test` fault is node:test's, judged
 // as replay judges it: the named test passes clean, and fails with the patch at the assertion with that message.
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { checkoutTree } from "./checkout.mjs";
+import { checkoutTree, repoPath, scratchFolder } from "./checkout.mjs";
+import { spawnable } from "./command.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
@@ -41,7 +41,7 @@ export function probe(root, config, names) {
 		if (!lstatSync(resolve(root, path), { throwIfNoEntry: false })) throw new Error(`probes.link: ${path} isn't in the working tree`);
 	}
 	const repo = git(root, "rev-parse", "--show-toplevel");
-	const scratch = mkdtempSync(join(tmpdir(), "marram-probe-copy-"));
+	const scratch = scratchFolder("marram-probe-copy-");
 	const forget = () => rmSync(scratch, { recursive: true, force: true });
 	const signals = ["SIGINT", "SIGTERM"].map((signal) => {
 		const stop = () => {
@@ -54,7 +54,7 @@ export function probe(root, config, names) {
 	try {
 		const copy = join(scratch, "copy");
 		checkoutTree(repo, treeOf(root), copy);
-		const project = join(copy, relative(repo, root));
+		const project = join(copy, repoPath(root));
 		for (const path of link) {
 			const target = join(project, path);
 			// lstat, so a tracked link to nothing counts as there.
@@ -97,8 +97,9 @@ function share(source, target, repo, copy) {
 	if (entry.isSymbolicLink()) {
 		const named = resolve(dirname(source), readlinkSync(source));
 		// Real paths on both sides: the repository's comes from git, already real, and a link may name it another way.
-		const leadsTo = existsSync(named) ? realpathSync(named) : named;
-		const inside = relative(realpathSync(repo), leadsTo);
+		// The operating system's real paths (on Windows, long names, not short ones like RUNNER~1), on both sides.
+		const leadsTo = existsSync(named) ? realpathSync.native(named) : named;
+		const inside = relative(realpathSync.native(repo), leadsTo);
 		const intoRepo = inside !== ".." && !inside.startsWith(".." + sep) && !isAbsolute(inside);
 		symlinkSync(intoRepo ? relative(dirname(target), join(copy, inside)) : leadsTo, target);
 	} else if (entry.isDirectory() && hasLink(source, 2)) {
@@ -201,7 +202,8 @@ function unquoted(path) {
 
 /** Run `run` from `cwd`: `{ status, error?, output }`, with stdout and stderr together. */
 function command(cwd, [program, ...args], timeout) {
-	const result = spawnSync(program, args, { cwd, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024 });
+	const run = spawnable(program, args, { cwd });
+	const result = spawnSync(run.file, run.args, { ...run.options, cwd, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024 });
 	return { status: result.status, error: result.error, output: (result.stdout ?? "") + (result.stderr ?? "") };
 }
 

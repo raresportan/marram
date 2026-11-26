@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { resolve, relative, sep } from "node:path";
+import { resolve } from "node:path";
+import { repoPath } from "./checkout.mjs";
 import { mapCitations } from "./map-citations.mjs";
 
 export function mapDiff(root, _config, args) {
@@ -15,8 +16,8 @@ export function mapDiff(root, _config, args) {
 export function removedCitations(root, ancestor, path) {
 	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trimEnd();
 	const file = resolve(root, path);
-	const repoPath = relative(git("rev-parse", "--show-toplevel"), file).split(sep).join("/");
-	const before = git("ls-tree", "--full-tree", ancestor, "--", ":(top,literal)" + repoPath) ? git("show", ancestor + ":" + repoPath) : "";
+	const named = repoPath(root, path);
+	const before = git("ls-tree", "--full-tree", ancestor, "--", ":(top,literal)" + named) ? git("show", ancestor + ":" + named) : "";
 	const current = new Set(mapCitations(existsSync(file) ? readFileSync(file, "utf8") : "").map((entry) => JSON.stringify(entry)));
 	return mapCitations(before).filter((entry) => !current.has(JSON.stringify(entry)));
 }

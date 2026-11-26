@@ -58,7 +58,7 @@ test("restrict finds sites per file, skips the owners, and tells a gone file fro
 		assert.deepEqual(problems.sort(), [
 			"clean.ts no longer calls danger: remove it from lint.mjs",
 			"removed.ts is gone: remove it from lint.mjs",
-			`${join("src", "deep", "stray.tsx")}:2 calls danger: call it from owner.ts, or list it in lint.mjs with why`,
+			"src/deep/stray.tsx:2 calls danger: call it from owner.ts, or list it in lint.mjs with why",
 		]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

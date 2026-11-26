@@ -6,7 +6,7 @@
 //
 // There is no exception list: a site that floats is fixed. Promises kept in a variable and dropped aren't seen; a
 // process-wide `unhandledRejection` handler (`hearRejections` in ./background.ts) logs those.
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { lineOf } from "../core/ratchet.mjs";
 
@@ -108,9 +108,11 @@ export function lintPromises({ root, projects }) {
 		const checker = program.getTypeChecker();
 		const base = resolve(root, folder);
 		for (const source of program.getSourceFiles()) {
-			if (source.isDeclarationFile || !source.fileName.startsWith(`${base}/`)) continue;
+			// TypeScript names files with forward slashes on every platform, so they're compared as resolved paths.
+			const inside = relative(base, resolve(source.fileName));
+			if (source.isDeclarationFile || inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue;
 			files++;
-			for (const line of floating(checker, source)) problems.push(`${relative(root, source.fileName)}:${line}`);
+			for (const line of floating(checker, source)) problems.push(`${relative(root, resolve(source.fileName)).split(sep).join("/")}:${line}`);
 		}
 	}
 	return { files, problems };
