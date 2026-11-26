@@ -5,12 +5,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { spawnable } from "../../src/core/command.mjs";
 
 test("a plain Node CLI verifies a feature with only Marram installed", () => {
 	const root = mkdtempSync(join(tmpdir(), "marram-cli-"));
 	try {
 		const pkg = resolve(import.meta.dirname, "../..");
-		const [packed] = JSON.parse(execFileSync("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", root, "--cache", join(root, ".npm")], { cwd: pkg, encoding: "utf8" }));
+		const pack = spawnable("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", root, "--cache", join(root, ".npm")]);
+		const [packed] = JSON.parse(execFileSync(pack.file, pack.args, { ...pack.options, cwd: pkg, encoding: "utf8" }));
 		const installed = join(root, "node_modules/@raresportan/marram");
 		mkdirSync(installed, { recursive: true });
 		execFileSync("tar", ["-xf", join(root, packed.filename), "--strip-components=1", "-C", installed]);

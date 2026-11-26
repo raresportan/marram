@@ -5,8 +5,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const CHECK = 'require("node:assert/strict").equal(require("./value.cjs"), 1, "stored value");\n';
 const NODE_TEST = 'require("node:test")("reads one", () => require("node:assert/strict").equal(require("./value.cjs"), 1, "stored value"));\n';
 

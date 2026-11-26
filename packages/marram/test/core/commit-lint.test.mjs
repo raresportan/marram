@@ -6,9 +6,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { classesIn, problems as against } from "../../src/core/commit-lint.mjs";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const rules = { classes: ["A", "B", "C", "D", "E", "F", "G", "H"] };
 const problems = (message) => against(message, rules);
 

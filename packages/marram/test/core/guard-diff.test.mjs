@@ -5,8 +5,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const MAP = ["- **Counting**", '  - ✅ counts › "It starts at zero"', '  - ✅ counts › "The count survives a restart"', ""].join("\n");
 
 /** A repository with a root project whose default gate runs the app's gate, and the app as a nested project. */

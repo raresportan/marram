@@ -387,7 +387,9 @@ Marram is a separate project, with no code from it.
 `npm run gate` runs the packages' tests and Tally's own gate. A change to a rule comes with a test that fails without it.
 
 CI (`.github/workflows/gate.yml`) runs `npm run gate:full` on every pull request and on main, on Ubuntu under
-`xvfb-run`, and keeps the gate's logs when it fails. For a pull request it also runs `marram guard-diff` against the
+`xvfb-run` and on Windows, and keeps each platform's gate logs when it fails. On Windows, a command a stage, probe or
+replay setup names that's installed as a `.cmd` or `.bat` script, such as `npm`, runs through `cmd.exe`, since Node
+won't start one directly. For a pull request it also runs `marram guard-diff` against the
 base branch and shows the result in the run's summary and in one comment on the pull request, edited on each push and
 posted only once the branch changes a guard. A pull request from a fork can't be commented on, so it gets the summary
 only. A project using Marram can do the same: run its full gate where its UI checks can open a window, and report

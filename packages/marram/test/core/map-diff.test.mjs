@@ -5,9 +5,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { mapCitations } from "../../src/core/map-citations.mjs";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const MAP = ["- **Counting.** Click the button.", '  - ✅ counts › "It starts at zero"', '  - ✅ counts › "The count survives a restart"', "- **Layout**", "  - ✅ layout", ""].join("\n");
 
 test("map citations pair each ✅ line with its feature, without the name's trailing punctuation", () => {

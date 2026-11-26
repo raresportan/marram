@@ -24,6 +24,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { checkoutTree } from "./checkout.mjs";
+import { spawnable } from "./command.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
@@ -201,7 +202,8 @@ function unquoted(path) {
 
 /** Run `run` from `cwd`: `{ status, error?, output }`, with stdout and stderr together. */
 function command(cwd, [program, ...args], timeout) {
-	const result = spawnSync(program, args, { cwd, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024 });
+	const run = spawnable(program, args);
+	const result = spawnSync(run.file, run.args, { ...run.options, cwd, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024 });
 	return { status: result.status, error: result.error, output: (result.stdout ?? "") + (result.stderr ?? "") };
 }
 

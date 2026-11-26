@@ -6,8 +6,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const GAP_MS = 2500;
 
 // Each run takes its turn from the plan: `pause` stops the gate past the gap and wakes it again, standing in for sleep.
