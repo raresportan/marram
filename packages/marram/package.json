@@ -37,7 +37,7 @@
     "./electron/session": { "types": "./src/electron/session.d.ts", "default": "./src/electron/session.js" }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/build.mjs",
     "prepack": "npm run build",
     "test": "node --test \"test/**/*.test.mjs\""
   },

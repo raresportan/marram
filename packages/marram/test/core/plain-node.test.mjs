@@ -54,15 +54,24 @@ test("the published package has no TypeScript sources: its TypeScript modules ru
 	const root = mkdtempSync(join(tmpdir(), "marram-built-"));
 	try {
 		const pkg = resolve(import.meta.dirname, "../..");
+		// What a deleted .ts left from an earlier build: the build clears it, so it isn't published.
+		writeFileSync(join(pkg, "src/core/deleted-since.js"), "");
+		writeFileSync(join(pkg, "src/core/deleted-since.d.ts"), "");
 		const build = spawnable("npm", ["run", "build"]);
 		execFileSync(build.file, build.args, { ...build.options, cwd: pkg, stdio: "ignore" });
 		const pack = spawnable("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", root, "--cache", join(root, ".npm")]);
 		const [packed] = JSON.parse(execFileSync(pack.file, pack.args, { ...pack.options, cwd: pkg, encoding: "utf8" }));
 		// Node won't strip types from a file under node_modules, so a .ts there can't run.
 		assert.deepEqual(packed.files.map(({ path }) => path).filter((path) => /\.[cm]?ts$/.test(path) && !/\.d\.[cm]?ts$/.test(path)), []);
+		assert.deepEqual(packed.files.map(({ path }) => path).filter((path) => path.includes("deleted-since")), []);
 		const installed = join(root, "node_modules/@raresportan/marram");
 		mkdirSync(installed, { recursive: true });
 		execFileSync("tar", ["-xf", join(root, packed.filename), "--strip-components=1", "-C", installed]);
+		// A declaration naming a .ts beside it names a file that isn't published, which TypeScript before 5.0 can't map
+		// to its .d.ts.
+		for (const { path } of packed.files.filter(({ path }) => /\.d\.[cm]?ts$/.test(path))) {
+			assert.doesNotMatch(readFileSync(join(installed, path), "utf8"), /from ["']\.\.?\/[^"']*\.[cm]?ts["']/, path);
+		}
 		const { exports } = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
 		const compiled = Object.entries(exports).filter(([, target]) => typeof target === "object");
 		assert.ok(compiled.length > 0);
@@ -70,7 +79,7 @@ test("the published package has no TypeScript sources: its TypeScript modules ru
 			assert.ok(existsSync(join(installed, types)) && existsSync(join(installed, file)), `${name}: ${types} and ${file} are published`);
 		}
 		// The ones that need no optional peer (React, Playwright), imported as a project would.
-		const plain = ["./core/until", "./node/background", "./node/scope", "./electron/ipc", "./electron/run", "./electron/feature-map", "./electron/geometry"];
+		const plain = ["./core/until", "./node/background", "./node/scope", "./electron/ipc", "./electron/run", "./electron/feature-map", "./electron/geometry", "./electron/frames"];
 		writeFileSync(join(root, "package.json"), '{ "type": "module" }');
 		writeFileSync(join(root, "use.mjs"), plain.map((name, i) => `import * as m${i} from "@raresportan/marram${name.slice(1)}"; if (!Object.keys(m${i}).length) throw Error("${name}");`).join("\n"));
 		const imported = spawnSync(process.execPath, ["use.mjs"], { cwd: root, encoding: "utf8" });

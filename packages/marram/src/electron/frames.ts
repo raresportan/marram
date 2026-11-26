@@ -2,7 +2,7 @@
 // every frame the renderer draws (requestAnimationFrame) while it runs, plus the long animation frames Chromium
 // reports, and checks the average rate and the longest frame. Displays faster than 60 Hz pass as long as no frame takes
 // longer than two 60 Hz frames. A slow frame's details say where its time went: tasks, callbacks, or style and layout.
-import type { JourneySession } from "./session.ts";
+import type { JourneySession } from "./session.js";
 
 /** At least this many frames per second on average; a little under 60 for timer jitter. */
 const MIN_FPS = 58;

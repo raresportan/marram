@@ -389,7 +389,8 @@ Marram is a separate project, with no code from it.
 `npm run gate` runs the packages' tests and Tally's own gate. A change to a rule comes with a test that fails without it.
 
 The package's TypeScript modules are compiled in place, to `.js` and `.d.ts` beside each `.ts`, by
-`npm run build -w @raresportan/marram`. `npm install` runs it, the gate runs it first, and `npm pack` runs it again.
+`npm run build -w @raresportan/marram`, which first removes what an earlier build left, so a deleted `.ts` leaves
+nothing to publish. `npm install` runs it, the gate runs it first, and `npm pack` runs it again.
 Only the compiled files are published, so a project on Marram runs it in plain Node and with any bundler. Tally imports
 the compiled files too, so after editing a `.ts` file outside the gate, build before running Tally.
 
