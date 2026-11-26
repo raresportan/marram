@@ -79,17 +79,17 @@ export function updateState(cwd, change) {
 }
 
 /**
- * `{ passed, tier, stage?, log?, at }` for a tree `tier` (the default gate, or the full one) passed, or failed less than
- * 15 minutes ago. A full pass counts for the default gate.
+ * `{ passed, tier, stage?, log?, coversDefault?, at }` for a tree `tier` (the default gate, or the full one) passed, or
+ * failed less than 15 minutes ago. A full pass counts for the default gate when it ran that gate's stages.
  */
 export function verdictOf(cwd, tree, tier = "default") {
 	const trees = readState(cwd).trees;
 	const project = projectTreeKey(cwd, tree);
 	const own = current(trees[verdictKey(project, tier)]);
-	// The full gate runs every default stage, so its pass answers for the default gate too.
+	// Decided by the gate from the configuration in the tree it tested, not from the one checked out when this is read.
 	if (own === undefined && tier === "default") {
 		const full = trees[verdictKey(project, "full")];
-		if (full?.passed) return full;
+		if (full?.passed && full.coversDefault === true) return full;
 	}
 	return own;
 }

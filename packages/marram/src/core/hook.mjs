@@ -25,13 +25,13 @@ async function judge(root, tree, show, tier = "default") {
 	// A hook that's killed (its timeout) passes it on, so the gate can stop what it started.
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.once(signal, () => gate.kill(signal));
 	await new Promise((done) => gate.once("close", done));
-	// A gate that changed files as it ran records no pass; it counts as failed with no stage.
+	// A gate that couldn't run, or that changed files as it ran, records no pass; it counts as failed with no stage.
 	return verdictOf(root, tree, tier) ?? { passed: false };
 }
 
 /** What an agent is told when the gate fails: where it failed, and the end of that stage's log. */
 function failure(verdict) {
-	if (verdict.stage === undefined) return "The gate didn't pass: files changed while it ran. Run `marram gate` and fix what fails.";
+	if (verdict.stage === undefined) return "The gate didn't record a pass: it couldn't run, or files changed while it ran. Run `marram gate` and fix what it reports.";
 	const tail = failureExcerpt(verdict.log);
 	return [
 		`The gate failed at ${verdict.stage}${verdict.reused ? " (the verdict on this exact code, from a run in the last 15 minutes)" : ""}, so this isn't done.`,
