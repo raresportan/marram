@@ -176,7 +176,9 @@ test("a test that doesn't finish in replay.timeoutMs is stopped, with what it st
 		const result = repo.replay(base, "probe.cjs");
 		assert.ok(Date.now() - started < 20_000, "replay waited for the test");
 		assert.equal(result.status, 1);
-		assert.equal(JSON.parse(result.stdout).base.detail, "The test didn't finish within 500 ms");
+		const { base: before, candidate } = JSON.parse(result.stdout);
+		assert.equal(before.detail, "The test didn't finish within 500 ms");
+		assert.equal(candidate.detail, "The test didn't finish within 500 ms");
 		pause(2000);
 		assert.equal(existsSync(join(outside, "test")), false, "the test was left running");
 	} finally {
