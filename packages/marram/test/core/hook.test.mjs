@@ -9,11 +9,13 @@ import { test } from "node:test";
 
 const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
 
-/** A repository whose default gate runs stage "d" and full gate "d" then "f", each noting its run in an ignored file. */
-function project({ prePush } = {}) {
+/** A stage that notes its run in an ignored file, then exits with `code`. */
+const stage = (name, { code = 0, env } = {}) => ({ name, run: ["node", "-e", `require("fs").appendFileSync("runs", ${JSON.stringify(name)}); process.exit(${code})`], ...(env ? { env } : {}) });
+
+/** A repository whose default gate runs stage "d" and full gate "d" then "f", unless `tiers` says otherwise. */
+function project({ prePush, tiers = { fast: [], default: [stage("d")], full: [stage("d"), stage("f")] } } = {}) {
 	const root = mkdtempSync(join(tmpdir(), "marram-hook-"));
-	const stage = (name) => ({ name, run: ["node", "-e", `require("fs").appendFileSync("runs", ${JSON.stringify(name)})`] });
-	const gate = { logs: "logs", tiers: { fast: [], default: [stage("d")], full: [stage("d"), stage("f")] }, ...(prePush === undefined ? {} : { prePush }) };
+	const gate = { logs: "logs", tiers, ...(prePush === undefined ? {} : { prePush }) };
 	writeFileSync(join(root, "marram.config.mjs"), `export default ${JSON.stringify({ gate })};`);
 	writeFileSync(join(root, ".gitignore"), "logs/\nruns\n");
 	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -113,6 +115,36 @@ test("a nested project's full pass cannot satisfy the root project's finish hook
 		assert.equal(repo.runs(), "d", "finish must run the root project's stage");
 		assert.equal(repo.finish().status, 0);
 		assert.equal(repo.runs(), "d", "finish reuses the root project's own pass");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a full pass counts for the default gate only when it ran the default stages, in order, as configured", () => {
+	const unlike = {
+		"a different stage": { default: [stage("t", { code: 1 })], full: [stage("b")] },
+		"the same stage with another environment": { default: [stage("d", { env: { MODE: "strict" } })], full: [stage("d"), stage("f")] },
+		"the default stages in another order": { default: [stage("d"), stage("f")], full: [stage("f"), stage("d")] },
+	};
+	for (const [difference, tiers] of Object.entries(unlike)) {
+		const repo = project({ tiers: { fast: [], ...tiers } });
+		try {
+			repo.commit("one");
+			const full = repo.gate("full");
+			assert.equal(full.status, 0, full.stdout + full.stderr);
+			const runs = repo.runs();
+			repo.finish();
+			assert.notEqual(repo.runs(), runs, `${difference}: finish must run the default gate`);
+		} finally {
+			repo.remove();
+		}
+	}
+	const repo = project({ tiers: { fast: [], default: [stage("d"), stage("e")], full: [stage("d"), stage("x"), stage("e")] } });
+	try {
+		repo.commit("one");
+		assert.equal(repo.gate("full").status, 0);
+		assert.equal(repo.finish().status, 0);
+		assert.equal(repo.runs(), "dxe", "a full gate with extra stages between the default ones still answers for it");
 	} finally {
 		repo.remove();
 	}

@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { projectTreeKey, stagesOf, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const TIERS = ["fast", "default", "full"];
@@ -106,7 +106,8 @@ export async function gate(root, config, [tier = "default"]) {
 	report.passed = true;
 	report.completedAt = new Date().toISOString();
 	await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
-	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
-	if (tree !== undefined && treeOf(root) === tree) verdict(true);
+	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded. The stages it ran
+	// are, so a full pass answers for the default gate only if it ran that gate's stages.
+	if (tree !== undefined && treeOf(root) === tree) verdict(true, { stages: stagesOf(tiers[tier]) });
 	console.log(`\nGate passed (${report.stages.reduce((total, stage) => total + stage.seconds, 0)}s).`);
 }

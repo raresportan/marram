@@ -79,19 +79,31 @@ export function updateState(cwd, change) {
 }
 
 /**
- * `{ passed, tier, stage?, log?, at }` for a tree `tier` (the default gate, or the full one) passed, or failed less than
- * 15 minutes ago. A full pass counts for the default gate.
+ * `{ passed, tier, stage?, log?, stages?, at }` for a tree `tier` (the default gate, or the full one) passed, or failed
+ * less than 15 minutes ago. A full pass counts for the default gate when it ran every one of `tiers.default`'s stages,
+ * in order, as they're configured now.
  */
-export function verdictOf(cwd, tree, tier = "default") {
+export function verdictOf(cwd, tree, tier, tiers) {
 	const trees = readState(cwd).trees;
 	const project = projectTreeKey(cwd, tree);
 	const own = current(trees[verdictKey(project, tier)]);
-	// The full gate runs every default stage, so its pass answers for the default gate too.
+	// Tiers are the project's to define, so a full gate needn't contain the default one: a pass reused for a gate whose
+	// stages it didn't run would let through code that gate fails.
 	if (own === undefined && tier === "default") {
 		const full = trees[verdictKey(project, "full")];
-		if (full?.passed) return full;
+		if (full?.passed && Array.isArray(full.stages) && ranInOrder(full.stages, stagesOf(tiers?.default ?? []))) return full;
 	}
 	return own;
+}
+
+/** What each stage runs: its command, arguments and environment. A name only labels a log. */
+export const stagesOf = (stages) => stages.map(({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]));
+
+/** Whether `ran` includes each of `wanted`, in the same order; other stages may come between them. */
+function ranInOrder(ran, wanted) {
+	let found = 0;
+	for (const stage of ran) if (stage === wanted[found]) found++;
+	return found === wanted.length;
 }
 
 /** A verdict that still counts: a pass, or a failure from the last FAILURE_TTL_MS. */
