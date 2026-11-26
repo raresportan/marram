@@ -35,5 +35,12 @@ test("on Windows, a program (.exe) runs as given, and so does a command it can't
 
 test("on Windows, a command named with its extension, or by path, is found as named", () => {
 	assert.equal(spawnable("build.bat", [], windows(["C:\\tools\\build.bat"])).file, "C:\\Windows\\system32\\cmd.exe");
-	assert.match(spawnable("scripts\\run", [], windows(["scripts\\run.cmd"])).args[3], /^"scripts\\run\.cmd"$/i);
+});
+
+test("on Windows, a command given by path is found from the folder it runs in, and named with backslashes", () => {
+	const project = { ...windows(["C:\\repo\\app\\scripts\\check.cmd"]), cwd: "C:\\repo\\app" };
+	assert.equal(spawnable("scripts\\check", [], project).args[3].toLowerCase(), '"c:\\repo\\app\\scripts\\check.cmd"');
+	// Written for every platform, with forward slashes, which cmd.exe would read as a switch.
+	assert.equal(spawnable("scripts/check.cmd", [], project).args[3].toLowerCase(), '"c:\\repo\\app\\scripts\\check.cmd"');
+	assert.equal(spawnable("./scripts/check", [], project).args[3].toLowerCase(), '"c:\\repo\\app\\scripts\\check.cmd"');
 });

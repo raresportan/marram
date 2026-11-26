@@ -45,7 +45,7 @@ export function replay(root, config, args) {
 		rmSync(target, { force: true });
 		writeFileSync(target, check);
 		if (setup) {
-			const run = spawnable(setup[0], setup.slice(1));
+			const run = spawnable(setup[0], setup.slice(1), { cwd });
 			const result = spawnSync(run.file, run.args, { ...run.options, cwd, stdio: ["ignore", 2, 2], timeout: timeoutMs });
 			if (result.error?.code === "ETIMEDOUT") return { state: "inconclusive", detail: `Setup didn't finish within ${timeoutMs} ms` };
 			if (result.status !== 0) return { state: "inconclusive", detail: "Setup failed" };

@@ -9,12 +9,13 @@ import { win32 } from "node:path";
 const META = /([()\][%!^"`<>&|;, *?])/g;
 
 /**
- * `{ file, args, options }` to spawn `command` with `args`. `platform`, `env` (for PATH, PATHEXT and ComSpec) and
- * `exists` are this process's unless given.
+ * `{ file, args, options }` to spawn `command` with `args` from `cwd`, which a command given by path is found from.
+ * `platform`, `env` (for PATH, PATHEXT and ComSpec) and `exists` are this process's unless given.
  */
-export function spawnable(command, args, { platform = process.platform, env = process.env, exists = existsSync } = {}) {
+export function spawnable(command, args, { cwd = process.cwd(), platform = process.platform, env = process.env, exists = existsSync } = {}) {
 	if (platform !== "win32") return { file: command, args, options: {} };
-	const found = onPath(command, env, exists);
+	// With backslashes: cmd.exe reads a / in the command's name as the start of a switch.
+	const found = onPath(command, cwd, env, exists);
 	if (found === undefined || !/\.(cmd|bat)$/i.test(found)) return { file: command, args, options: {} };
 	// npm's shims in node_modules\.bin hand their arguments to cmd.exe a second time, so they're escaped twice there.
 	const twice = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(found);
@@ -37,14 +38,17 @@ function variable(env, name) {
 	return key === undefined ? undefined : env[key];
 }
 
-/** The file Windows would run for `command`: on PATH (or as a path), with each of PATHEXT's extensions tried. */
-function onPath(command, env, exists) {
+/**
+ * The file Windows would run for `command`, as a whole path: on PATH, or given as a path from `cwd`, with each of
+ * PATHEXT's extensions tried.
+ */
+function onPath(command, cwd, env, exists) {
 	const extensions = (variable(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
 	const named = extensions.some((extension) => command.toLowerCase().endsWith(extension.toLowerCase())) ? [command] : [];
 	const candidates = (base) => [...named.map(() => base), ...extensions.map((extension) => base + extension)];
-	const folders = /[\\/]/.test(command) || win32.isAbsolute(command) ? [""] : (variable(env, "PATH") ?? "").split(";").filter(Boolean);
+	const folders = /[\\/]/.test(command) || win32.isAbsolute(command) ? [cwd] : (variable(env, "PATH") ?? "").split(";").filter(Boolean);
 	for (const folder of folders) {
-		for (const candidate of candidates(folder === "" ? command : win32.join(folder, command))) if (exists(candidate)) return candidate;
+		for (const candidate of candidates(win32.resolve(folder, command))) if (exists(candidate)) return candidate;
 	}
 	return undefined;
 }

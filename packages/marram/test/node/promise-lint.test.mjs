@@ -15,12 +15,13 @@ declare const emitter: { on(name: string, listener: () => void): void };
 `;
 
 /** The reasons the lint gives for `body`, in a module with `work`, `background`, `every` and `emitter` in scope. */
-function lint(body) {
+function lint(body, file = "a.ts") {
 	const root = mkdtempSync(join(tmpdir(), "marram-promises-"));
 	try {
 		mkdirSync(join(root, "src"));
-		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "NodeNext", strict: true, noEmit: true }, include: ["src"] }));
-		writeFileSync(join(root, "src", "a.ts"), `${PRELUDE}\nexport async function main() {\n${body}\n}\n`);
+		// Listed by name too: TypeScript's include globs leave out a name that starts with a dot.
+		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "NodeNext", strict: true, noEmit: true }, include: ["src"], files: [`src/${file}`] }));
+		writeFileSync(join(root, "src", file), `${PRELUDE}\nexport async function main() {\n${body}\n}\n`);
 		return lintPromises({ root, projects: [{ config: "tsconfig.json", folder: "src" }] }).problems.map((problem) => problem.split(": ")[1]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
@@ -44,4 +45,8 @@ test("an async function passed where its result is dropped floats, written in pl
 	assert.deepEqual(lint(`every(work);`), ["async function passed where its promise is dropped"]);
 	assert.deepEqual(lint(`every(() => work());`), ["promise returned where it's dropped"]);
 	assert.deepEqual(lint(`every(() => background("x", work()));`), []);
+});
+
+test("a file in the folder whose name starts with two dots is linted too", () => {
+	assert.deepEqual(lint(`work();`, "..draft.ts"), ["promise not awaited or caught"]);
 });

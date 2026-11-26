@@ -202,7 +202,7 @@ function unquoted(path) {
 
 /** Run `run` from `cwd`: `{ status, error?, output }`, with stdout and stderr together. */
 function command(cwd, [program, ...args], timeout) {
-	const run = spawnable(program, args);
+	const run = spawnable(program, args, { cwd });
 	const result = spawnSync(run.file, run.args, { ...run.options, cwd, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024 });
 	return { status: result.status, error: result.error, output: (result.stdout ?? "") + (result.stderr ?? "") };
 }

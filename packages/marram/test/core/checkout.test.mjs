@@ -54,3 +54,14 @@ test("a checkout has the repository's bytes, whatever core.autocrlf says", () =>
 		rmSync(scratch, { recursive: true, force: true });
 	}
 });
+
+// Windows runners have the checkout on D: and temporary folders on C:.
+test("a path on another drive is outside the repository", { skip: process.platform !== "win32" && "only Windows has drives" }, () => {
+	const repo = repository();
+	try {
+		const other = repo.root.toUpperCase().startsWith("C:") ? "D:\\other.mjs" : "C:\\other.mjs";
+		assert.match(repoPath(repo.root, other), /^\.\.\//);
+	} finally {
+		repo.remove();
+	}
+});

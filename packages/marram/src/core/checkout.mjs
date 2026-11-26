@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
 
@@ -36,7 +36,10 @@ function clone(repo, dir) {
  */
 export function repoPath(root, path = ".") {
 	const prefix = git(root, "rev-parse", "--show-prefix");
-	return posix.normalize(posix.join(prefix, relative(root, resolve(root, path)).split(sep).join("/"))).replace(/(.)\/$/, "$1");
+	const fromRoot = relative(root, resolve(root, path));
+	// On another Windows drive there's no relative path: it's outside.
+	if (isAbsolute(fromRoot)) return `../${fromRoot.split(sep).join("/")}`;
+	return posix.normalize(posix.join(prefix, fromRoot.split(sep).join("/"))).replace(/(.)\/$/, "$1");
 }
 
 /**

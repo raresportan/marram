@@ -9,6 +9,7 @@ finding either strengthens a rung or shows that one is missing.
 | **seam**: a project's detail inside a package | A path, name or habit of one project makes a package useless to another | architecture: projects pass their details in; lint: `scripts/independent.mjs`; journey: Tally builds on the packages too |
 | **check**: a check that can't fail or that flakes | A check that only prints; a hand-rolled wait; a clock bound | lint: `@raresportan/marram/core/check-lint`, `@raresportan/marram/electron/journey-lint` |
 | **leak**: a value kept where it outlives its use | A stage's command or `env`, which may hold a token, written to state that stays after the run | unit: tests that read the state a command writes for a known value |
+| **platform**: code that assumes one operating system | A path compared in one spelling or with one separator, a command started as one platform starts it, a signal or rename only POSIX has | check: CI's full gate on Linux and Windows; unit: tests that give the other platform's paths or a fake of its environment |
 
 ## Naming a fix
 

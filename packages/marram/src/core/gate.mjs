@@ -65,7 +65,7 @@ export async function gate(root, config, [tier = "default"]) {
 		const started = Date.now();
 		const log = createWriteStream(join(dir, `${name}.log`));
 		const stageEnv = { ...outsideGit, ...env };
-		const run = spawnable(command, args, { env: stageEnv });
+		const run = spawnable(command, args, { cwd: root, env: stageEnv });
 		const child = spawn(run.file, run.args, { ...run.options, cwd: root, env: stageEnv, stdio: ["ignore", "pipe", "pipe"] });
 		running = child;
 		child.stdout.pipe(log, { end: false });

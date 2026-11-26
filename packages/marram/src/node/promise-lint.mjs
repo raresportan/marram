@@ -110,7 +110,7 @@ export function lintPromises({ root, projects }) {
 		for (const source of program.getSourceFiles()) {
 			// TypeScript names files with forward slashes on every platform, so they're compared as resolved paths.
 			const inside = relative(base, resolve(source.fileName));
-			if (source.isDeclarationFile || inside === "" || inside.startsWith("..") || isAbsolute(inside)) continue;
+			if (source.isDeclarationFile || inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue;
 			files++;
 			for (const line of floating(checker, source)) problems.push(`${relative(root, resolve(source.fileName)).split(sep).join("/")}:${line}`);
 		}
