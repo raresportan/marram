@@ -288,3 +288,44 @@ test("the pre and post scripts npm runs around a stage's script are compared too
 		repo.remove();
 	}
 });
+
+test("guard-diff reports probes removed, added or loosened, and a patch whose contents changed", () => {
+	const repo = repository();
+	try {
+		const probes = (faults) => `export default { gate: ${JSON.stringify({ logs: "logs", ...repo.rootGate })}, probes: { faults: [${faults}] } };\n`;
+		const zero = (expect) => `{ name: "a stored zero", patch: "probes/zero.patch", run: ["node", "check.cjs"], expect: ${expect} }`;
+		const rollback = '{ name: "a rollback", patch: "probes/rollback.patch", run: ["node", "check.cjs"], expect: "rolled back" }';
+		repo.write("marram.config.mjs", probes(`${zero("/stored value/")}, ${rollback}`));
+		repo.write("probes/zero.patch", "first\n");
+		repo.write("probes/rollback.patch", "first\n");
+		repo.commit();
+		repo.write("marram.config.mjs", probes(`${zero("/./")}, { name: "a smoke test", patch: "probes/zero.patch", run: ["true"], expect: "x" }`));
+		repo.write("probes/zero.patch", "second\n");
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^ {2}probe a stored zero: expect now \/\.\/ \(was \/stored value\/\)$/m);
+		assert.match(result.stdout, /^ {2}probe a stored zero: patch probes\/zero\.patch changed$/m);
+		assert.match(result.stdout, /^ {2}probe removed: a rollback$/m);
+		assert.match(result.stdout, /^ {2}probe added: a smoke test$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("guard-diff reports how the probes' copy is prepared, and not a fault's test keys in another order", () => {
+	const repo = repository();
+	try {
+		const probes = (settings, test) => `export default { gate: ${JSON.stringify({ logs: "logs", ...repo.rootGate })}, probes: { ${settings} faults: [{ name: "a stored zero", patch: "probes/zero.patch", test: ${test} }] } };\n`;
+		repo.write("probes/zero.patch", "patch\n");
+		repo.write("marram.config.mjs", probes('setup: ["npm", "ci"], link: ["node_modules"], timeoutMs: 300000,', '{ file: "a.test.mjs", name: "reads one", assertion: "stored value" }'));
+		repo.commit();
+		repo.write("marram.config.mjs", probes('setup: ["true"], link: [], timeoutMs: 1000,', '{ assertion: "stored value", name: "reads one", file: "a.test.mjs" }'));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}probes setup now true \(was npm ci\)$/m);
+		assert.match(result.stdout, /^ {2}probes link now \[\] \(was \["node_modules"\]\)$/m);
+		assert.match(result.stdout, /^ {2}probes timeoutMs now 1000 \(was 300000\)$/m);
+		assert.doesNotMatch(result.stdout, /test now/);
+	} finally {
+		repo.remove();
+	}
+});

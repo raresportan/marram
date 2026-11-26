@@ -1,0 +1,11 @@
+diff --git a/examples/tally/src/features/counter/host/index.ts b/examples/tally/src/features/counter/host/index.ts
+index e60453c..9fbd264 100644
+--- a/examples/tally/src/features/counter/host/index.ts
++++ b/examples/tally/src/features/counter/host/index.ts
+@@ -7,6 +7,5 @@ export function serveCounter(file: string): void {
+ 	const store = new CounterStore(file);
+ 	counterIpc.handle((channel, handler) => ipcMain.handle(channel, handler), {
+ 		read: () => store.read(),
+-		increment: () => store.increment(),
+ 	});
+ }

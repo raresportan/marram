@@ -1,8 +1,8 @@
 // What a branch changed in the checks that judge it, so a reviewer sees what a green gate means after the change.
 // Usage: marram guard-diff <base> [--map <feature map>]…
 // Compares the merge base with the working tree: each project's gate tiers (every marram.config.mjs in the repository),
-// its push requirement, the package scripts its stages run, the files in core.hooksPath, and the citations of each
-// feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
+// its push requirement, the package scripts its stages run, its probes and how their copy is prepared, the files in
+// core.hooksPath, and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
 // repository rather than a project's configuration, so a configuration deleted or broken is reported, not fatal.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -92,8 +92,44 @@ function compareProject(before, now, project) {
 		if (kept.join("\0\0") !== keptNow.join("\0\0")) lines.push(`${tier}: order now ${keptNow.map((key) => current.get(key).name).join(", ")} (was ${kept.map((key) => old.get(key).name).join(", ")})`);
 	}
 	if (was.prePush !== is.prePush) lines.push(`prePush: ${was.prePush} → ${is.prePush}`);
+	// How the copy the probes run in is prepared: what setup builds and what link shares decide what they exercise.
+	for (const setting of ["setup", "link", "timeoutMs"]) {
+		const [old, current] = [was.probes[setting], is.probes[setting]];
+		if (JSON.stringify(old) === JSON.stringify(current)) continue;
+		const value = (v) => (setting === "setup" && Array.isArray(v) ? shown(v.map(String)) : JSON.stringify(v) ?? "(none)");
+		lines.push(`probes ${setting} now ${value(current)} (was ${value(old)})`);
+	}
+	lines.push(...probeChanges(before, now, project, was.faults, is.faults));
 	const all = (gate) => TIERS.flatMap((tier) => gate.tiers[tier]);
 	lines.push(...scriptChanges(before, now, project, all(was), all(is)));
+	return lines;
+}
+
+/** Probes (`probes.faults`) removed, added, or changed: a field of the fault, or the contents of its patch. */
+function probeChanges(before, now, project, wasFaults, isFaults) {
+	const lines = [];
+	const byName = (faults) => new Map(faults.map((fault) => [fault.name, fault]));
+	const [old, current] = [byName(wasFaults), byName(isFaults)];
+	for (const name of old.keys()) if (!current.has(name)) lines.push(`probe removed: ${name}`);
+	for (const name of current.keys()) if (!old.has(name)) lines.push(`probe added: ${name}`);
+	const value = (field, fault) => (field === "run" && Array.isArray(fault.run) ? shown(fault.run.map(String)) : field === "expect" ? fault.expect : JSON.stringify(fault[field]));
+	const patchAt = (top, path) => {
+		try {
+			return readFileSync(join(top, project, String(path)), "utf8");
+		} catch {
+			return undefined;
+		}
+	};
+	for (const [name, fault] of current) {
+		const previous = old.get(name);
+		if (previous === undefined) continue;
+		for (const field of ["patch", "cwd", "run", "expect", "test"]) {
+			if (JSON.stringify(fault[field]) !== JSON.stringify(previous[field])) lines.push(`probe ${name}: ${field} now ${value(field, fault)} (was ${value(field, previous)})`);
+		}
+		const [was, is] = [patchAt(before, previous.patch), patchAt(now, fault.patch)];
+		if (is === undefined) lines.push(`probe ${name}: patch ${fault.patch} is missing`);
+		else if (was !== is && fault.patch === previous.patch) lines.push(`probe ${name}: patch ${fault.patch} changed`);
+	}
 	return lines;
 }
 
@@ -117,17 +153,26 @@ const READ_GATE = `
 import { writeSync } from "node:fs";
 const answer = (value) => writeSync(3, JSON.stringify(value));
 try {
-	const gate = (await import(process.argv[1])).default?.gate ?? {};
+	const config = (await import(process.argv[1])).default ?? {};
+	const gate = config.gate ?? {};
 	const stages = (tier) => (Array.isArray(gate.tiers?.[tier]) ? gate.tiers[tier] : []).map(({ name, run, env }) => ({ name: String(name), run: Array.isArray(run) ? run.map(String) : [], env }));
-	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default" });
+	// A RegExp as its source, a string quoted, so the two can't compare equal.
+	const faults = (Array.isArray(config.probes?.faults) ? config.probes.faults : []).map((fault) => ({
+		name: String(fault?.name), patch: fault?.patch, cwd: fault?.cwd, run: fault?.run,
+		// In one order, so the same test written with its keys in another compares equal.
+		test: fault?.test === undefined ? undefined : { file: fault.test?.file, name: fault.test?.name, assertion: fault.test?.assertion },
+		expect: fault?.expect instanceof RegExp ? String(fault.expect) : JSON.stringify(fault?.expect),
+	}));
+	const { setup, link, timeoutMs } = config.probes ?? {};
+	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", faults, probes: { setup, link, timeoutMs } });
 } catch (error) {
 	answer({ error: String(error?.message ?? error).split("\\n")[0] });
 }`;
 
-/** `{ tiers, prePush }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
+/** `{ tiers, prePush, faults, probes }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
 function gateIn(top, project, where) {
 	const folder = join(top, project);
-	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default" };
+	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", faults: [], probes: {} };
 	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000, stdio: ["ignore", "ignore", "ignore", "pipe"] });
 	const answer = result.output?.[3] ? JSON.parse(result.output[3]) : { error: result.error?.message ?? "it exited without giving its gate" };
 	return answer.error === undefined ? answer : { error: `couldn't load ${CONFIG} ${where}: ${answer.error}` };

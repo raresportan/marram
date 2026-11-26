@@ -1,0 +1,15 @@
+diff --git a/examples/tally/scripts/verify/journeys.ts b/examples/tally/scripts/verify/journeys.ts
+index 6ff800a..c89cb08 100644
+--- a/examples/tally/scripts/verify/journeys.ts
++++ b/examples/tally/scripts/verify/journeys.ts
+@@ -11,6 +11,10 @@ export async function counts(session: Session): Promise<void> {
+ 	await button().click();
+ 	await session.check("One click counts one", async () => (await button().textContent()) === "Count: 1");
+ 	await session.shot("counted");
++}
++
++export async function checkRestart(session: Session): Promise<void> {
++	const button = () => session.page.getByRole("button", { name: /Count/ });
+ 	await session.close();
+ 	await session.launch();
+ 	await session.check("The count survives a restart", async () => (await button().textContent()) === "Count: 1");
