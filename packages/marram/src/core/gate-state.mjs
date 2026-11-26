@@ -18,14 +18,15 @@ export function treeOf(cwd) {
 	const dir = mkdtempSync(join(tmpdir(), "marram-gate-"));
 	const index = join(dir, "index");
 	try {
-		// A copy of the real index, so unchanged files aren't hashed again. With its times: git trusts a file whose size
-		// and mtime match its entry unless the entry is as new as the index file, and a copy made now would hide a
-		// same-size edit made in the second that entry was recorded.
+		// A copy of the real index, so unchanged files aren't hashed again. Git trusts a file whose size and mtime match
+		// its entry unless the entry is as new as the index file, so a copy newer than the real index would hide a
+		// same-size edit made in the second that entry was recorded. The copy's time is the real one's whole second,
+		// never later: a Date would round 0.9999 s up to the next second. Older only means more files are read again.
 		const real = resolve(cwd, git(cwd, ["rev-parse", "--git-path", "index"]));
 		if (existsSync(real)) {
 			copyFileSync(real, index);
-			const { atime, mtime } = statSync(real);
-			utimesSync(index, atime, mtime);
+			const second = Number(statSync(real, { bigint: true }).mtimeNs / 1_000_000_000n);
+			utimesSync(index, second, second);
 		}
 		git(cwd, ["add", "-A"], { GIT_INDEX_FILE: index });
 		return git(cwd, ["write-tree"], { GIT_INDEX_FILE: index });
