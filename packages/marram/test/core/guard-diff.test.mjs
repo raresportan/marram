@@ -1,0 +1,130 @@
+// The guard diff: what a branch changed in the checks that judge it. Run: npm test -w @raresportan/marram
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+
+const BIN = new URL("../../bin/marram.mjs", import.meta.url).pathname;
+const MAP = ["- **Counting**", '  - ✅ counts › "It starts at zero"', '  - ✅ counts › "The count survives a restart"', ""].join("\n");
+
+/** A repository with a root project whose default gate runs the app's gate, and the app as a nested project. */
+function repository() {
+	const root = mkdtempSync(join(tmpdir(), "marram-guard-diff-"));
+	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+	const write = (path, content) => {
+		mkdirSync(join(root, path, ".."), { recursive: true });
+		writeFileSync(join(root, path), content);
+	};
+	const config = (gate) => `export default ${JSON.stringify({ gate: { logs: "logs", ...gate } })};`;
+	const rootGate = { tiers: { fast: [], default: [{ name: "app", run: ["npm", "run", "gate", "-w", "app"] }], full: [] }, prePush: "full" };
+	const appGate = {
+		tiers: {
+			fast: [],
+			default: [{ name: "unit", run: ["npm", "test"] }, { name: "journeys", run: ["npm", "run", "verify"], env: { TOKEN: "first-secret" } }],
+			full: [{ name: "unit", run: ["npm", "test"] }, { name: "journeys", run: ["npm", "run", "verify"], env: { TOKEN: "first-secret" } }],
+		},
+	};
+	const appScripts = { gate: "marram gate", test: "node --test", verify: "node verify.mjs", lint: "eslint ." };
+	write("marram.config.mjs", config(rootGate));
+	write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+	write("packages/app/marram.config.mjs", config(appGate));
+	write("packages/app/package.json", JSON.stringify({ name: "app", scripts: appScripts }));
+	write("packages/app/docs/feature-map.md", MAP);
+	write(".githooks/pre-push", "exec marram hook pre-push\n");
+	git("init", "-q", "-b", "main");
+	git("config", "core.hooksPath", ".githooks");
+	git("add", ".");
+	git("-c", "user.name=test", "-c", "user.email=test@example.org", "commit", "-qm", "base");
+	git("checkout", "-qb", "change");
+	return {
+		root, write, config, rootGate, appGate, appScripts,
+		diff: (...args) => spawnSync(process.execPath, [BIN, "guard-diff", "main", ...args], { cwd: root, encoding: "utf8" }),
+		remove: () => rmSync(root, { recursive: true, force: true }),
+	};
+}
+
+test("guard-diff says when nothing that judges the change has changed, and what it can't see", () => {
+	const repo = repository();
+	try {
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^No guard changes since [0-9a-f]{7}, the merge base with main\.$/m);
+		assert.match(result.stdout, /^Not compared: /m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("guard-diff reports a stage moved out of the default gate, in a nested project, with where it still runs", () => {
+	const repo = repository();
+	try {
+		const tiers = { ...repo.appGate.tiers, default: [repo.appGate.tiers.default[0]] };
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers }));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^packages\/app\n {2}default: removed journeys: npm run verify \(still in full\)$/m);
+		assert.doesNotMatch(result.stdout, /full:/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("guard-diff reports a changed command and names changed environment variables without their values", () => {
+	const repo = repository();
+	try {
+		const journeys = { name: "journeys", run: ["npm", "run", "verify", "--", "--quick"], env: { TOKEN: "second-secret" } };
+		const tiers = { ...repo.appGate.tiers, full: [repo.appGate.tiers.full[0], journeys] };
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}full: journeys now runs npm run verify -- --quick \(was npm run verify\)$/m);
+		assert.match(result.stdout, /^ {2}full: journeys env changed: TOKEN$/m);
+		assert.doesNotMatch(result.stdout, /secret/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("guard-diff reports a relaxed push requirement, a changed script a stage runs, and a removed hook", () => {
+	const repo = repository();
+	try {
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, prePush: "default" }));
+		repo.write("packages/app/package.json", JSON.stringify({ name: "app", scripts: { ...repo.appScripts, gate: "marram gate fast", verify: "node verify.mjs --skip-restart", lint: "true" } }));
+		rmSync(join(repo.root, ".githooks/pre-push"));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^\(root\)\n {2}prePush: full → default$/m);
+		assert.match(result.stdout, /^ {2}script gate \(packages\/app\/package\.json\): marram gate fast \(was marram gate\)$/m);
+		assert.match(result.stdout, /^ {2}script verify \(packages\/app\/package\.json\): node verify\.mjs --skip-restart \(was node verify\.mjs\)$/m);
+		assert.doesNotMatch(result.stdout, /script lint/, "no stage runs lint");
+		assert.match(result.stdout, /^Hooks \(\.githooks\)\n {2}deleted pre-push$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("guard-diff lists citations removed from a feature map it's given", () => {
+	const repo = repository();
+	try {
+		repo.write("packages/app/docs/feature-map.md", MAP.replace('  - ✅ counts › "The count survives a restart"\n', ""));
+		const result = repo.diff("--map", "packages/app/docs/feature-map.md");
+		assert.match(result.stdout, /^Feature map packages\/app\/docs\/feature-map\.md\n {2}removed: Counting — counts › "The count survives a restart"$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("guard-diff says which configuration it couldn't load, and still compares the rest", () => {
+	const repo = repository();
+	try {
+		repo.write("packages/app/marram.config.mjs", "export default {");
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, prePush: "default" }));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^packages\/app\n {2}couldn't load marram\.config\.mjs in the working tree: /m);
+		assert.match(result.stdout, /prePush: full → default/);
+	} finally {
+		repo.remove();
+	}
+});

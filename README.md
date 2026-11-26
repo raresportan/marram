@@ -257,6 +257,25 @@ citations verified by another checker, supply their patterns in `featureMap.cust
 Run `marram map-diff origin/main docs/feature-map.md` from the project root in PR review to list verification
 obligations removed since the merge base. Removals are informational so a maintainer can review intentional changes.
 
+### What a green gate means after a change
+
+A change can weaken the checks that judge it and still pass them: move a journey from the default gate to the full one,
+or add a flag to the script a stage runs. Run `marram guard-diff origin/main` in PR review to see what the branch
+changed in its guards since the merge base:
+
+- each project's gate tiers (every `marram.config.mjs` in the repository): stages removed, added, or running a
+  different command, and where a removed stage still runs;
+- `env` changes, by variable name only, since a value may be a token;
+- `gate.prePush`;
+- the `package.json` scripts a stage runs, including through `-w`;
+- the files in `core.hooksPath`;
+- citations removed from each feature map named with `--map <path>`.
+
+Like map-diff, it reports and exits 0, leaving the decision to the reviewer. It doesn't read test files or follow a
+script into the scripts it runs, so a test deleted or skipped inside a stage, or a journey a script stops choosing,
+doesn't appear. Configurations are imported from a temporary checkout of the merge base, so one that imports a
+dependency may not load there; the output says which.
+
 ### Replay a regression on two revisions
 
 Commit the candidate fix and its regression test. From the project root, run

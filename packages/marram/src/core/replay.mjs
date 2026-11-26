@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkoutAt } from "./checkout.mjs";
 
 const reporter = fileURLToPath(new URL("./replay-reporter.mjs", import.meta.url));
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
@@ -35,10 +36,7 @@ export function replay(root, config, args) {
 
 	function runCheck(revision, side) {
 		const checkout = join(scratch, side);
-		// A clone of its own, so setup can't touch the caller's refs, config or worktrees; --shared borrows the objects
-		// instead of copying them.
-		git(repo, "clone", "-q", "--shared", "--no-checkout", "--", repo, checkout);
-		git(checkout, "-c", "core.hooksPath=/dev/null", "-c", "advice.detachedHead=false", "checkout", "-q", "--detach", revision);
+		checkoutAt(repo, revision, checkout);
 		const cwd = join(checkout, project);
 		const target = join(checkout, path);
 		if (!staysInside(checkout, dirname(target))) throw new Error("Test directory points outside checkout");
