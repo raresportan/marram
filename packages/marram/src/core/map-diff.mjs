@@ -7,14 +7,16 @@ export function mapDiff(root, _config, args) {
 	if (args.length !== 2) throw new Error("Usage: marram map-diff <base> <map relative to project>");
 	const [base, path] = args;
 	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trimEnd();
-	const commit = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}");
-	const ancestor = git("merge-base", commit, "HEAD");
+	const ancestor = git("merge-base", git("rev-parse", "--verify", "--end-of-options", base + "^{commit}"), "HEAD");
+	for (const entry of removedCitations(root, ancestor, path)) console.log(`Removed verification: ${entry.feature} — ${entry.citation}`);
+}
+
+/** The citations in the map at `path` (from the project root) at `ancestor` that the working tree's map no longer has. */
+export function removedCitations(root, ancestor, path) {
+	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trimEnd();
 	const file = resolve(root, path);
 	const repoPath = relative(git("rev-parse", "--show-toplevel"), file).split(sep).join("/");
-	const object = ancestor + ":" + repoPath;
-	const before = git("ls-tree", "--full-tree", ancestor, "--", ":(top,literal)" + repoPath) ? git("show", object) : "";
+	const before = git("ls-tree", "--full-tree", ancestor, "--", ":(top,literal)" + repoPath) ? git("show", ancestor + ":" + repoPath) : "";
 	const current = new Set(mapCitations(existsSync(file) ? readFileSync(file, "utf8") : "").map((entry) => JSON.stringify(entry)));
-	for (const entry of mapCitations(before)) {
-		if (!current.has(JSON.stringify(entry))) console.log(`Removed verification: ${entry.feature} — ${entry.citation}`);
-	}
+	return mapCitations(before).filter((entry) => !current.has(JSON.stringify(entry)));
 }

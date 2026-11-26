@@ -257,6 +257,29 @@ citations verified by another checker, supply their patterns in `featureMap.cust
 Run `marram map-diff origin/main docs/feature-map.md` from the project root in PR review to list verification
 obligations removed since the merge base. Removals are informational so a maintainer can review intentional changes.
 
+### What a green gate means after a change
+
+A change can weaken the checks that judge it and still pass them: move a journey from the default gate to the full one,
+or add a flag to the script a stage runs. Run `marram guard-diff origin/main` in PR review to see what the branch
+changed in its guards since the merge base:
+
+- each project's gate tiers (every `marram.config.mjs` in the repository, including one deleted): stages removed,
+  added, reordered, or running different arguments, and where a removed stage still runs with the same arguments and
+  `env`;
+- `env` changes, by variable name only, since a value may be a token;
+- `gate.prePush`;
+- the `package.json` scripts a stage runs, including through `-w` and, for npm, the `pre` and `post` scripts around
+  them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
+  unchanged command, or a script changed along with the stage's arguments, shows what now runs;
+- the files in `core.hooksPath`, tracked or not;
+- citations removed from each feature map named with `--map <path>`, relative to where you run it.
+
+Like map-diff, it reports and exits 0, leaving the decision to the reviewer. It doesn't read test files or follow a
+script into the scripts it runs, so a test deleted or skipped inside a stage, or a journey a script stops choosing,
+doesn't appear. Each configuration is evaluated in its own process, from its project folder in a temporary checkout of
+the merge base or in the working tree, so each side reads its own files. A temporary checkout has no `node_modules`,
+so a configuration that imports a dependency may not load there; the output says which, and compares the rest.
+
 ### Replay a regression on two revisions
 
 Commit the candidate fix and its regression test. From the project root, run
