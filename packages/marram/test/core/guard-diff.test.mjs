@@ -311,3 +311,21 @@ test("guard-diff reports probes removed, added or loosened, and a patch whose co
 		repo.remove();
 	}
 });
+
+test("guard-diff reports how the probes' copy is prepared, and not a fault's test keys in another order", () => {
+	const repo = repository();
+	try {
+		const probes = (settings, test) => `export default { gate: ${JSON.stringify({ logs: "logs", ...repo.rootGate })}, probes: { ${settings} faults: [{ name: "a stored zero", patch: "probes/zero.patch", test: ${test} }] } };\n`;
+		repo.write("probes/zero.patch", "patch\n");
+		repo.write("marram.config.mjs", probes('setup: ["npm", "ci"], link: ["node_modules"], timeoutMs: 300000,', '{ file: "a.test.mjs", name: "reads one", assertion: "stored value" }'));
+		repo.commit();
+		repo.write("marram.config.mjs", probes('setup: ["true"], link: [], timeoutMs: 1000,', '{ assertion: "stored value", name: "reads one", file: "a.test.mjs" }'));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}probes setup now true \(was npm ci\)$/m);
+		assert.match(result.stdout, /^ {2}probes link now \[\] \(was \["node_modules"\]\)$/m);
+		assert.match(result.stdout, /^ {2}probes timeoutMs now 1000 \(was 300000\)$/m);
+		assert.doesNotMatch(result.stdout, /test now/);
+	} finally {
+		repo.remove();
+	}
+});

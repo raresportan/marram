@@ -1,8 +1,8 @@
 // What a branch changed in the checks that judge it, so a reviewer sees what a green gate means after the change.
 // Usage: marram guard-diff <base> [--map <feature map>]…
 // Compares the merge base with the working tree: each project's gate tiers (every marram.config.mjs in the repository),
-// its push requirement, the package scripts its stages run, the files in core.hooksPath, and the citations of each
-// feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
+// its push requirement, the package scripts its stages run, its probes and how their copy is prepared, the files in
+// core.hooksPath, and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
 // repository rather than a project's configuration, so a configuration deleted or broken is reported, not fatal.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -92,6 +92,13 @@ function compareProject(before, now, project) {
 		if (kept.join("\0\0") !== keptNow.join("\0\0")) lines.push(`${tier}: order now ${keptNow.map((key) => current.get(key).name).join(", ")} (was ${kept.map((key) => old.get(key).name).join(", ")})`);
 	}
 	if (was.prePush !== is.prePush) lines.push(`prePush: ${was.prePush} → ${is.prePush}`);
+	// How the copy the probes run in is prepared: what setup builds and what link shares decide what they exercise.
+	for (const setting of ["setup", "link", "timeoutMs"]) {
+		const [old, current] = [was.probes[setting], is.probes[setting]];
+		if (JSON.stringify(old) === JSON.stringify(current)) continue;
+		const value = (v) => (setting === "setup" && Array.isArray(v) ? shown(v.map(String)) : JSON.stringify(v) ?? "(none)");
+		lines.push(`probes ${setting} now ${value(current)} (was ${value(old)})`);
+	}
 	lines.push(...probeChanges(before, now, project, was.faults, is.faults));
 	const all = (gate) => TIERS.flatMap((tier) => gate.tiers[tier]);
 	lines.push(...scriptChanges(before, now, project, all(was), all(is)));
@@ -151,18 +158,21 @@ try {
 	const stages = (tier) => (Array.isArray(gate.tiers?.[tier]) ? gate.tiers[tier] : []).map(({ name, run, env }) => ({ name: String(name), run: Array.isArray(run) ? run.map(String) : [], env }));
 	// A RegExp as its source, a string quoted, so the two can't compare equal.
 	const faults = (Array.isArray(config.probes?.faults) ? config.probes.faults : []).map((fault) => ({
-		name: String(fault?.name), patch: fault?.patch, cwd: fault?.cwd, run: fault?.run, test: fault?.test,
+		name: String(fault?.name), patch: fault?.patch, cwd: fault?.cwd, run: fault?.run,
+		// In one order, so the same test written with its keys in another compares equal.
+		test: fault?.test === undefined ? undefined : { file: fault.test?.file, name: fault.test?.name, assertion: fault.test?.assertion },
 		expect: fault?.expect instanceof RegExp ? String(fault.expect) : JSON.stringify(fault?.expect),
 	}));
-	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", faults });
+	const { setup, link, timeoutMs } = config.probes ?? {};
+	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", faults, probes: { setup, link, timeoutMs } });
 } catch (error) {
 	answer({ error: String(error?.message ?? error).split("\\n")[0] });
 }`;
 
-/** `{ tiers, prePush, faults }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
+/** `{ tiers, prePush, faults, probes }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
 function gateIn(top, project, where) {
 	const folder = join(top, project);
-	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", faults: [] };
+	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", faults: [], probes: {} };
 	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000, stdio: ["ignore", "ignore", "ignore", "pipe"] });
 	const answer = result.output?.[3] ? JSON.parse(result.output[3]) : { error: result.error?.message ?? "it exited without giving its gate" };
 	return answer.error === undefined ? answer : { error: `couldn't load ${CONFIG} ${where}: ${answer.error}` };

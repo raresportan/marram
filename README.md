@@ -272,7 +272,8 @@ changed in its guards since the merge base:
   them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
   unchanged command, or a script changed along with the stage's arguments, shows what now runs;
 - the files in `core.hooksPath`, tracked or not;
-- probes (`probes.faults`): faults removed or added, a field of one changed, or its patch's contents;
+- probes: faults removed or added, a field of one changed, or its patch's contents, and the `setup`, `link` and
+  `timeoutMs` that prepare their copy;
 - citations removed from each feature map named with `--map <path>`, relative to where you run it.
 
 Like map-diff, it reports and exits 0, leaving the decision to the reviewer. It doesn't read test files or follow a
@@ -339,8 +340,14 @@ gate again), or inconclusive (the clean run failed, the patch no longer applies,
 reason). The command exits 1 unless every fault is caught. `marram probe "<name>"` runs the faults named.
 
 Paths and commands are the project's; a fault's `cwd` changes where its command runs. Patches apply at the repository
-root, and each is taken back out with its files' times restored before the next fault, so a build tool doesn't see
-stale sources. A linked path is shared, not copied, and git refuses a patch that reaches through it.
+root, and each is taken back out with its files' times restored before the next fault (renamed files included), so a
+build tool doesn't see stale sources.
+
+A linked path must exist in the working tree and be ignored there. It's shared, not copied, and git refuses a patch
+that reaches through it. A linked folder that has links in it, such as `node_modules` with its workspace packages, its
+scopes and `.bin`, is made again in the copy. Each of its links that leads into the repository leads to the same place
+in the copy instead, so a fault patched into a workspace package is the one its check loads. Links nested deeper, in a
+folder whose own entries are not links, still lead to the working tree.
 
 Marram probes three of its own guards this way, in the full gate: a shared cache verdict across nested projects, a
 missing IPC handler, and a restart check left in an uncalled helper. The patches are in `probes/`. They need the same

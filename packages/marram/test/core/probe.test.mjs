@@ -1,7 +1,7 @@
 // Probes: a known defect put back by a patch must still be caught by its check. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -25,7 +25,7 @@ function project(faults, options = "") {
 	write("value.cjs", "module.exports = 1;\n");
 	write("check.cjs", CHECK);
 	write("value.test.cjs", NODE_TEST);
-	write(".gitignore", "shared/\nready\n");
+	write(".gitignore", "shared/\nready\nnode_modules/\n");
 	git("add", "-A");
 	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "project");
 	write("value.cjs", "module.exports = 0;\n");
@@ -148,6 +148,72 @@ test("a fault leaves the copy as it found it, file times included, for the next 
 		const result = repo.probe();
 		assert.equal(result.status, 0, result.stdout + result.stderr);
 		assert.match(result.stdout, /^✓ a stored zero, again: caught/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+/** A patch setting `path`'s one line from `from` to `to`. */
+const patchOf = (path, from, to) => [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, "@@ -1 +1 @@", `-${from}`, `+${to}`, ""].join("\n");
+
+test("a linked folder's links into the repository lead into the copy, so a patched workspace package is the one checked", () => {
+	const faults = [
+		'{ name: "a relative link", patch: "probes/lib.patch", run: ["node", "check-lib.cjs"], expect: /lib value/ }',
+		'{ name: "an absolute link", patch: "probes/lib.patch", run: ["node", "check-scoped.cjs"], expect: /scoped value/ }',
+	];
+	const repo = project(faults.join(", "), 'link: ["node_modules"],');
+	try {
+		repo.write("packages/lib/index.cjs", "module.exports = 1;\n");
+		repo.write("probes/lib.patch", patchOf("packages/lib/index.cjs", "module.exports = 1;", "module.exports = 0;"));
+		repo.write("check-lib.cjs", 'require("dep");\nrequire("node:assert/strict").equal(require("lib"), 1, "lib value");\n');
+		repo.write("check-scoped.cjs", 'require("node:assert/strict").equal(require("@scope/lib"), 1, "scoped value");\n');
+		repo.write("node_modules/dep/index.cjs", "module.exports = true;\n");
+		repo.write("node_modules/dep/package.json", JSON.stringify({ main: "index.cjs" }));
+		repo.write("packages/lib/package.json", JSON.stringify({ main: "index.cjs" }));
+		symlinkSync("../packages/lib", join(repo.root, "node_modules/lib"));
+		mkdirSync(join(repo.root, "node_modules/@scope"));
+		symlinkSync(join(repo.root, "packages/lib"), join(repo.root, "node_modules/@scope/lib"));
+		const result = repo.probe();
+		assert.match(result.stdout, /^✓ a relative link: caught/m, result.stdout + result.stderr);
+		assert.match(result.stdout, /^✓ an absolute link: caught/m);
+		assert.equal(readFileSync(join(repo.root, "packages/lib/index.cjs"), "utf8"), "module.exports = 1;\n", "the working tree's package is untouched");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a link to a path the working tree doesn't have, or over one it does, is refused, as are a bad timeout and cwd", () => {
+	const refusals = [
+		['link: ["missing"],', BY_COMMAND, /probes\.link: missing isn't in the working tree/],
+		['link: ["dangling"],', BY_COMMAND, /probes\.link: dangling is in the working tree, and only an ignored path can be linked/],
+		["timeoutMs: -1,", BY_COMMAND, /probes\.timeoutMs must be a positive number of milliseconds/],
+		["", BY_COMMAND.replace("patch:", "cwd: 5, patch:"), /probes\.faults\[0\] \("a stored zero"\): cwd must be a path in the project/],
+	];
+	for (const [options, fault, refusal] of refusals) {
+		const repo = project(fault, options);
+		try {
+			symlinkSync("nowhere", join(repo.root, "dangling"));
+			const result = repo.probe();
+			assert.equal(result.status, 1, options);
+			assert.match(result.stderr, refusal);
+		} finally {
+			repo.remove();
+		}
+	}
+});
+
+test("a patch that renames a file puts it back with its times", () => {
+	const fresh = 'const { statSync } = require("node:fs");\nif (statSync("source.txt").mtimeMs > statSync("ready").mtimeMs) throw new Error("stale build");\n';
+	const moved = '{ name: "a moved source", patch: "probes/move.patch", run: ["node", "check.cjs"], expect: /stored value/ }';
+	const repo = project(`${moved}, ${BY_COMMAND}`, 'setup: ["node", "-e", "require(\\"node:fs\\").writeFileSync(\\"ready\\", \\"\\")"],');
+	try {
+		repo.write("source.txt", "source\n");
+		repo.write("check.cjs", CHECK + fresh);
+		const move = ["diff --git a/source.txt b/moved.txt", "similarity index 100%", "rename from source.txt", "rename to moved.txt", patchOf("value.cjs", "module.exports = 1;", "module.exports = 0;")].join("\n");
+		repo.write("probes/move.patch", move);
+		const result = repo.probe();
+		assert.match(result.stdout, /^✓ a moved source: caught/m, result.stdout + result.stderr);
+		assert.match(result.stdout, /^✓ a stored zero: caught/m);
 	} finally {
 		repo.remove();
 	}

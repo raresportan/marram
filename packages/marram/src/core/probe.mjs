@@ -7,7 +7,8 @@
 //
 //   probes: {
 //     setup: ["npm", "ci"],          // optional: run once in the copy, before the faults
-//     link: ["node_modules"],        // optional: ignored paths shared from the working tree rather than rebuilt
+//     link: ["node_modules"],        // optional: ignored paths shared from the working tree rather than rebuilt; links
+//                                    //   in them that lead into the repository lead into the copy instead
 //     timeoutMs: 300000,             // optional: for each command
 //     faults: [
 //       { name, patch: "probes/no-rollback.patch", run: ["pytest", "tests/test_tx.py"], expect: /balance unchanged/ },
@@ -19,9 +20,9 @@
 // at the repository root. `expect` is a RegExp, or a string the output must contain. A `test` fault is node:test's, judged
 // as replay judges it: the named test passes clean, and fails with the patch at the assertion with that message.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { checkoutTree } from "./checkout.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
@@ -34,6 +35,11 @@ export function probe(root, config, names) {
 	const chosen = choose(faults, names);
 	if (setup !== undefined && !isCommand(setup)) throw new Error('probes.setup must be a command and its arguments, as in ["npm", "ci"]');
 	if (!Array.isArray(link) || !link.every((path) => typeof path === "string" && path !== "")) throw new Error("probes.link must be a list of paths");
+	if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("probes.timeoutMs must be a positive number of milliseconds");
+	for (const path of link) {
+		// A link to nothing would let what runs in the copy create that path in the working tree, through the link.
+		if (!lstatSync(resolve(root, path), { throwIfNoEntry: false })) throw new Error(`probes.link: ${path} isn't in the working tree`);
+	}
 	const repo = git(root, "rev-parse", "--show-toplevel");
 	const scratch = mkdtempSync(join(tmpdir(), "marram-probe-copy-"));
 	const forget = () => rmSync(scratch, { recursive: true, force: true });
@@ -51,9 +57,10 @@ export function probe(root, config, names) {
 		const project = join(copy, relative(repo, root));
 		for (const path of link) {
 			const target = join(project, path);
-			if (existsSync(target)) throw new Error(`probes.link: ${path} is in the working tree, and only an ignored path can be linked`);
+			// lstat, so a tracked link to nothing counts as there.
+			if (lstatSync(target, { throwIfNoEntry: false })) throw new Error(`probes.link: ${path} is in the working tree, and only an ignored path can be linked`);
 			mkdirSync(dirname(target), { recursive: true });
-			symlinkSync(resolve(root, path), target);
+			share(resolve(root, path), target, repo, copy);
 		}
 		if (setup !== undefined) {
 			const result = command(project, setup, timeoutMs);
@@ -76,6 +83,34 @@ export function probe(root, config, names) {
 	}
 }
 
+/**
+ * `source` from the working tree at `target` in the copy, shared rather than copied. A file or a folder with no links
+ * directly in it is one link to the original. A folder with links in it (a node_modules folder, its scopes, .bin) is
+ * made again in the copy, each entry shared the same way, and each link that leads into the repository is pointed at
+ * the same place in the copy: otherwise a workspace package linked from node_modules would be the working tree's, and a
+ * fault patched into the copy's would go unchecked. Its plain files are copied, since a wrapper script in .bin finds its
+ * package relative to itself.
+ */
+function share(source, target, repo, copy) {
+	const entry = lstatSync(source);
+	if (entry.isSymbolicLink()) {
+		const named = resolve(dirname(source), readlinkSync(source));
+		// Real paths on both sides: the repository's comes from git, already real, and a link may name it another way.
+		const leadsTo = existsSync(named) ? realpathSync(named) : named;
+		const inside = relative(realpathSync(repo), leadsTo);
+		const intoRepo = inside !== ".." && !inside.startsWith(".." + sep) && !isAbsolute(inside);
+		symlinkSync(intoRepo ? relative(dirname(target), join(copy, inside)) : leadsTo, target);
+	} else if (entry.isDirectory() && readdirSync(source, { withFileTypes: true }).some((child) => child.isSymbolicLink())) {
+		mkdirSync(target);
+		for (const child of readdirSync(source, { withFileTypes: true })) {
+			if (child.isFile()) cpSync(join(source, child.name), join(target, child.name), { preserveTimestamps: true });
+			else share(join(source, child.name), join(target, child.name), repo, copy);
+		}
+	} else {
+		symlinkSync(source, target);
+	}
+}
+
 /** The faults `names` picks (all of them when it's empty), each checked for what a fault needs. */
 function choose(faults, names) {
 	if (!Array.isArray(faults) || faults.length === 0) throw new Error("marram.config.mjs has no probes.faults");
@@ -86,6 +121,7 @@ function choose(faults, names) {
 		const byCommand = isCommand(fault.run) && (fault.expect instanceof RegExp || (typeof fault.expect === "string" && fault.expect !== ""));
 		const byTest = ["file", "name", "assertion"].every((key) => typeof fault.test?.[key] === "string" && fault.test[key] !== "");
 		if (byCommand === byTest) throw new Error(`${label} needs either run and expect, or test: { file, name, assertion }`);
+		if (fault.cwd !== undefined && (typeof fault.cwd !== "string" || fault.cwd === "")) throw new Error(`${label}: cwd must be a path in the project`);
 		if (faults.findIndex((other) => other.name === fault.name) !== i) throw new Error(`${label}: another fault has that name`);
 	});
 	for (const name of names) if (!faults.some((fault) => fault.name === name)) throw new Error(`No fault named "${name}" in probes.faults`);
@@ -112,7 +148,7 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 	const patch = resolve(root, fault.patch);
 	// Each file's times too, put back with the file: a build tool that compares them would otherwise take the next
 	// fault's copy for one whose sources changed since it was built.
-	const touched = spawnSync("git", ["apply", "--numstat", "-z", patch], { cwd: copy, encoding: "utf8" }).stdout?.split("\0").filter(Boolean).map((row) => row.split("\t")[2]) ?? [];
+	const touched = touchedBy(copy, patch);
 	const times = touched.filter((file) => existsSync(join(copy, file))).map((file) => [join(copy, file), statSync(join(copy, file))]);
 	const applied = spawnSync("git", ["apply", "--whitespace=nowarn", patch], { cwd: copy, encoding: "utf8" });
 	if (applied.status !== 0) return { state: "inconclusive", detail: `the patch no longer applies: ${(applied.stderr || applied.error?.message || "").trim().split("\n")[0]}` };
@@ -127,6 +163,30 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 	if (faulty.state === "passed") return { state: "missed" };
 	if (faulty.state === "expected") return { state: "caught" };
 	return { state: "inconclusive", detail: `failed, but not as expected: ${faulty.detail}` };
+}
+
+/**
+ * The files the patch at `patch` touches, as they're named in the copy before it's applied: what `git apply --numstat`
+ * lists, and the old path of each rename, which it leaves out but taking the patch out puts back.
+ */
+function touchedBy(copy, patch) {
+	const listed = spawnSync("git", ["apply", "--numstat", "-z", patch], { cwd: copy, encoding: "utf8" }).stdout ?? "";
+	const files = listed.split("\0").map((row) => row.split("\t")[2]).filter(Boolean);
+	for (const line of readFileSync(patch, "utf8").split("\n")) if (line.startsWith("rename from ")) files.push(unquoted(line.slice("rename from ".length)));
+	return files;
+}
+
+/** A path as git writes it in a patch: as is, or in double quotes with C escapes (octal bytes for non-ASCII). */
+function unquoted(path) {
+	if (!path.startsWith('"')) return path;
+	const bytes = [];
+	const named = { n: 10, t: 9, r: 13, b: 8, f: 12, a: 7, v: 11, '"': 34, "\\": 92 };
+	for (let i = 1; i < path.length - 1; i++) {
+		if (path[i] !== "\\") bytes.push(...Buffer.from(path[i]));
+		else if (/[0-7]/.test(path[i + 1])) bytes.push(parseInt(path.slice(i + 1, (i += 3) + 1), 8));
+		else bytes.push(named[path[++i]] ?? path.charCodeAt(i));
+	}
+	return Buffer.from(bytes).toString("utf8");
 }
 
 /** Run `run` from `cwd`: `{ status, error?, output }`, with stdout and stderr together. */
