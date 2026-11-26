@@ -18,20 +18,20 @@ const MARRAM = join(import.meta.dirname, "..", "..", "bin", "marram.mjs");
 const stdin = () => readFileSync(0, "utf8");
 
 /** `tier`'s verdict on `tree`, running that gate when there is none. `show` sends its progress to the terminal. */
-async function judge(root, config, tree, show, tier = "default") {
-	const known = verdictOf(root, tree, tier, config.gate.tiers);
+async function judge(root, tree, show, tier = "default") {
+	const known = verdictOf(root, tree, tier);
 	if (known !== undefined) return { ...known, reused: true };
 	const gate = spawn(process.execPath, [MARRAM, "gate", ...(tier === "default" ? [] : [tier])], { cwd: root, stdio: ["ignore", show ? "inherit" : "ignore", "inherit"] });
 	// A hook that's killed (its timeout) passes it on, so the gate can stop what it started.
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.once(signal, () => gate.kill(signal));
 	await new Promise((done) => gate.once("close", done));
-	// A gate that changed files as it ran records no pass; it counts as failed with no stage.
-	return verdictOf(root, tree, tier, config.gate.tiers) ?? { passed: false };
+	// A gate that couldn't run, or that changed files as it ran, records no pass; it counts as failed with no stage.
+	return verdictOf(root, tree, tier) ?? { passed: false };
 }
 
 /** What an agent is told when the gate fails: where it failed, and the end of that stage's log. */
 function failure(verdict) {
-	if (verdict.stage === undefined) return "The gate didn't pass: files changed while it ran. Run `marram gate` and fix what fails.";
+	if (verdict.stage === undefined) return "The gate didn't record a pass: it couldn't run, or files changed while it ran. Run `marram gate` and fix what it reports.";
 	const tail = failureExcerpt(verdict.log);
 	return [
 		`The gate failed at ${verdict.stage}${verdict.reused ? " (the verdict on this exact code, from a run in the last 15 minutes)" : ""}, so this isn't done.`,
@@ -52,13 +52,13 @@ async function prePush(root, config) {
 		const [ref, sha] = line.split(" ");
 		if (/^0+$/.test(sha)) continue; // a deletion
 		const tree = git(root, ["rev-parse", `${sha}^{tree}`]);
-		if (verdictOf(root, tree, tier, config.gate.tiers)?.passed) continue;
+		if (verdictOf(root, tree, tier)?.passed) continue;
 		if (treeOf(root) !== tree) {
 			console.error(`${ref} hasn't passed the ${tier} gate, and the working tree isn't that commit, so it can't be checked here.\nCommit or stash your changes, check it out and push again (or \`git push --no-verify\` to skip the gate).`);
 			process.exit(1);
 		}
 		console.error(`Gating ${ref} (the ${tier} gate) before it's pushed (\`git push --no-verify\` skips this).`);
-		const verdict = await judge(root, config, tree, true, tier);
+		const verdict = await judge(root, tree, true, tier);
 		if (!verdict.passed) {
 			console.error(failure(verdict));
 			process.exit(1);
@@ -72,13 +72,13 @@ function claudeTurn(root) {
 	updateState(root, (state) => { state.sessions[session] = { start: tree, sentBack: 0, at: Date.now() }; });
 }
 
-async function claudeStop(root, config) {
+async function claudeStop(root) {
 	const { session_id: session } = JSON.parse(stdin());
 	const tree = treeOf(root);
 	const turn = readState(root).sessions[session];
 	// A turn that changed no code (a question, a plan) ends without the gate.
 	if (turn?.start === tree) process.exit(0);
-	const verdict = await judge(root, config, tree, false);
+	const verdict = await judge(root, tree, false);
 	if (verdict.passed) process.exit(0);
 	// Counted under the lock, from the state as it is now: the gate may have run for minutes since `turn` was read.
 	const sendBack = updateState(root, (state) => {
@@ -96,8 +96,8 @@ async function claudeStop(root, config) {
 	process.exit(2);
 }
 
-async function finish(root, config) {
-	const verdict = await judge(root, config, treeOf(root), false);
+async function finish(root) {
+	const verdict = await judge(root, treeOf(root), false);
 	if (!verdict.passed) {
 		console.log(failure(verdict));
 		process.exit(1);

@@ -15,8 +15,8 @@ const stage = (name, { code = 0, env } = {}) => ({ name, run: ["node", "-e", `re
 /** A repository whose default gate runs stage "d" and full gate "d" then "f", unless `tiers` says otherwise. */
 function project({ prePush, tiers = { fast: [], default: [stage("d")], full: [stage("d"), stage("f")] } } = {}) {
 	const root = mkdtempSync(join(tmpdir(), "marram-hook-"));
-	const gate = { logs: "logs", tiers, ...(prePush === undefined ? {} : { prePush }) };
-	writeFileSync(join(root, "marram.config.mjs"), `export default ${JSON.stringify({ gate })};`);
+	const configure = (tiers) => writeFileSync(join(root, "marram.config.mjs"), `export default ${JSON.stringify({ gate: { logs: "logs", tiers, ...(prePush === undefined ? {} : { prePush }) } })};`);
+	configure(tiers);
 	writeFileSync(join(root, ".gitignore"), "logs/\nruns\n");
 	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 	git("init", "-q");
@@ -29,6 +29,7 @@ function project({ prePush, tiers = { fast: [], default: [stage("d")], full: [st
 	const marram = (args, input = "") => spawnSync("node", [BIN, ...args], { cwd: root, input, encoding: "utf8" });
 	return {
 		root,
+		configure,
 		commit,
 		runs: () => (existsSync(join(root, "runs")) ? readFileSync(join(root, "runs"), "utf8") : ""),
 		push: (sha) => marram(["hook", "pre-push"], `refs/heads/main ${sha} refs/heads/main ${"0".repeat(40)}\n`),
@@ -133,8 +134,9 @@ test("a full pass counts for the default gate only when it ran the default stage
 			const full = repo.gate("full");
 			assert.equal(full.status, 0, full.stdout + full.stderr);
 			const runs = repo.runs();
-			repo.finish();
+			const finish = repo.finish();
 			assert.notEqual(repo.runs(), runs, `${difference}: finish must run the default gate`);
+			assert.equal(finish.status, tiers.default.some(({ run }) => run[2].includes("exit(1)")) ? 1 : 0, `${difference}: finish reports the default gate's result\n${finish.stdout}`);
 		} finally {
 			repo.remove();
 		}
@@ -145,6 +147,45 @@ test("a full pass counts for the default gate only when it ran the default stage
 		assert.equal(repo.gate("full").status, 0);
 		assert.equal(repo.finish().status, 0);
 		assert.equal(repo.runs(), "dxe", "a full gate with extra stages between the default ones still answers for it");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a push is judged by the configuration of the tree the full gate ran on, not the one checked out now", () => {
+	const build = stage("b");
+	const repo = project({ tiers: { fast: [], default: [stage("t", { code: 1 })], full: [build] } });
+	try {
+		const sha = repo.commit("one");
+		assert.equal(repo.gate("full").status, 0);
+		repo.configure({ fast: [], default: [build], full: [build] });
+		const push = repo.push(sha);
+		assert.equal(push.status, 1, "the pushed commit's own default gate fails");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a verdict doesn't keep the commands or environment of the stages it ran", () => {
+	const repo = project({ tiers: { fast: [], default: [stage("d", { env: { TOKEN: "synthetic-secret-value" } })], full: [stage("d", { env: { TOKEN: "synthetic-secret-value" } })] } });
+	try {
+		repo.commit("one");
+		assert.equal(repo.gate("full").status, 0);
+		const state = readFileSync(join(repo.root, ".git", "marram-gate.json"), "utf8");
+		assert.doesNotMatch(state, /synthetic-secret-value|appendFileSync/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("without a default tier, a full pass doesn't answer for the default gate", () => {
+	const repo = project({ tiers: { fast: [], full: [stage("f")] } });
+	try {
+		repo.commit("one");
+		assert.equal(repo.gate("full").status, 0);
+		const finish = repo.finish();
+		assert.equal(finish.status, 1);
+		assert.match(finish.stderr, /has no gate\.tiers\.default/);
 	} finally {
 		repo.remove();
 	}

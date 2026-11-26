@@ -12,10 +12,24 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectTreeKey, stagesOf, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const TIERS = ["fast", "default", "full"];
+
+/**
+ * Whether the full tier runs each default stage, in order, with the same command, arguments and environment; other
+ * stages may come between them. Tiers are the project's, so a full gate needn't contain the default one, and its pass
+ * then says nothing about the default gate. Only this answer is kept, not the stages: their env may hold secrets.
+ */
+function ranDefault(tiers) {
+	if (!Array.isArray(tiers.default)) return false;
+	const runs = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+	const wanted = tiers.default.map(runs);
+	let found = 0;
+	for (const stage of tiers.full.map(runs)) if (stage === wanted[found]) found++;
+	return found === wanted.length;
+}
 
 export async function gate(root, config, [tier = "default"]) {
 	if (!TIERS.includes(tier)) {
@@ -23,6 +37,10 @@ export async function gate(root, config, [tier = "default"]) {
 		process.exit(1);
 	}
 	const { logs, progress, tiers, sleepGapMs = 30_000 } = config.gate;
+	if (!Array.isArray(tiers?.[tier])) {
+		console.error(`marram.config.mjs has no gate.tiers.${tier}: a list of stages.`);
+		process.exit(1);
+	}
 	const dir = join(root, logs, `gate-${tier}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 	await mkdir(dir, { recursive: true });
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
@@ -106,8 +124,7 @@ export async function gate(root, config, [tier = "default"]) {
 	report.passed = true;
 	report.completedAt = new Date().toISOString();
 	await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
-	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded. The stages it ran
-	// are, so a full pass answers for the default gate only if it ran that gate's stages.
-	if (tree !== undefined && treeOf(root) === tree) verdict(true, { stages: stagesOf(tiers[tier]) });
+	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
+	if (tree !== undefined && treeOf(root) === tree) verdict(true, tier === "full" ? { coversDefault: ranDefault(tiers) } : {});
 	console.log(`\nGate passed (${report.stages.reduce((total, stage) => total + stage.seconds, 0)}s).`);
 }

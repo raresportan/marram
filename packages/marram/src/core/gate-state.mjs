@@ -79,31 +79,19 @@ export function updateState(cwd, change) {
 }
 
 /**
- * `{ passed, tier, stage?, log?, stages?, at }` for a tree `tier` (the default gate, or the full one) passed, or failed
- * less than 15 minutes ago. A full pass counts for the default gate when it ran every one of `tiers.default`'s stages,
- * in order, as they're configured now.
+ * `{ passed, tier, stage?, log?, coversDefault?, at }` for a tree `tier` (the default gate, or the full one) passed, or
+ * failed less than 15 minutes ago. A full pass counts for the default gate when it ran that gate's stages.
  */
-export function verdictOf(cwd, tree, tier, tiers) {
+export function verdictOf(cwd, tree, tier = "default") {
 	const trees = readState(cwd).trees;
 	const project = projectTreeKey(cwd, tree);
 	const own = current(trees[verdictKey(project, tier)]);
-	// Tiers are the project's to define, so a full gate needn't contain the default one: a pass reused for a gate whose
-	// stages it didn't run would let through code that gate fails.
+	// Decided by the gate from the configuration in the tree it tested, not from the one checked out when this is read.
 	if (own === undefined && tier === "default") {
 		const full = trees[verdictKey(project, "full")];
-		if (full?.passed && Array.isArray(full.stages) && ranInOrder(full.stages, stagesOf(tiers?.default ?? []))) return full;
+		if (full?.passed && full.coversDefault === true) return full;
 	}
 	return own;
-}
-
-/** What each stage runs: its command, arguments and environment. A name only labels a log. */
-export const stagesOf = (stages) => stages.map(({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]));
-
-/** Whether `ran` includes each of `wanted`, in the same order; other stages may come between them. */
-function ranInOrder(ran, wanted) {
-	let found = 0;
-	for (const stage of ran) if (stage === wanted[found]) found++;
-	return found === wanted.length;
 }
 
 /** A verdict that still counts: a pass, or a failure from the last FAILURE_TTL_MS. */
