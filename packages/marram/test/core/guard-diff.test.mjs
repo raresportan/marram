@@ -288,3 +288,26 @@ test("the pre and post scripts npm runs around a stage's script are compared too
 		repo.remove();
 	}
 });
+
+test("guard-diff reports probes removed, added or loosened, and a patch whose contents changed", () => {
+	const repo = repository();
+	try {
+		const probes = (faults) => `export default { gate: ${JSON.stringify({ logs: "logs", ...repo.rootGate })}, probes: { faults: [${faults}] } };\n`;
+		const zero = (expect) => `{ name: "a stored zero", patch: "probes/zero.patch", run: ["node", "check.cjs"], expect: ${expect} }`;
+		const rollback = '{ name: "a rollback", patch: "probes/rollback.patch", run: ["node", "check.cjs"], expect: "rolled back" }';
+		repo.write("marram.config.mjs", probes(`${zero("/stored value/")}, ${rollback}`));
+		repo.write("probes/zero.patch", "first\n");
+		repo.write("probes/rollback.patch", "first\n");
+		repo.commit();
+		repo.write("marram.config.mjs", probes(`${zero("/./")}, { name: "a smoke test", patch: "probes/zero.patch", run: ["true"], expect: "x" }`));
+		repo.write("probes/zero.patch", "second\n");
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^ {2}probe a stored zero: expect now \/\.\/ \(was \/stored value\/\)$/m);
+		assert.match(result.stdout, /^ {2}probe a stored zero: patch probes\/zero\.patch changed$/m);
+		assert.match(result.stdout, /^ {2}probe removed: a rollback$/m);
+		assert.match(result.stdout, /^ {2}probe added: a smoke test$/m);
+	} finally {
+		repo.remove();
+	}
+});

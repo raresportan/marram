@@ -1,0 +1,12 @@
+diff --git a/packages/marram/src/core/gate-state.mjs b/packages/marram/src/core/gate-state.mjs
+index 56e54c7..ddcdc1a 100644
+--- a/packages/marram/src/core/gate-state.mjs
++++ b/packages/marram/src/core/gate-state.mjs
+@@ -119,6 +119,6 @@ export function verdictOf(cwd, tree, tier = "default") {
+ const current = (verdict) => (verdict === undefined || verdict.passed || Date.now() - verdict.at < FAILURE_TTL_MS ? verdict : undefined);
+ 
+ /** The config directory within the worktree distinguishes projects sharing the same Git tree and state file. */
+-export const projectTreeKey = (cwd, tree) => JSON.stringify([git(cwd, ["rev-parse", "--show-prefix"]), tree]);
++export const projectTreeKey = (cwd, tree) => tree;
+ 
+ export const verdictKey = (projectTree, tier) => (tier === "full" ? `${projectTree}:full` : projectTree);

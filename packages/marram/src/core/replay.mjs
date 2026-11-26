@@ -1,11 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { checkoutAt } from "./checkout.mjs";
+import { runNamedTest } from "./node-test.mjs";
 
-const reporter = fileURLToPath(new URL("./replay-reporter.mjs", import.meta.url));
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
 
 /** Whether `path`, once its existing part's symlinks are resolved, stays inside `folder`. Checked before creating anything. */
@@ -32,7 +31,6 @@ export function replay(root, config, args) {
 	const base = git(root, "rev-parse", "--verify", "--end-of-options", baseRef + "^{commit}");
 	const check = execFileSync("git", ["show", candidate + ":" + path.split(sep).join("/")], { cwd: root });
 	const scratch = mkdtempSync(join(tmpdir(), "marram-replay-"));
-	const pattern = "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
 
 	function runCheck(revision, side) {
 		const checkout = join(scratch, side);
@@ -47,17 +45,7 @@ export function replay(root, config, args) {
 			const result = spawnSync(setup[0], setup.slice(1), { cwd, stdio: ["ignore", 2, 2] });
 			if (result.status !== 0) return { state: "inconclusive", detail: "Setup failed" };
 		}
-		const output = join(scratch, side + ".jsonl");
-		const run = spawnSync(process.execPath, ["--test", "--test-reporter", reporter, "--test-reporter-destination", output, "--test-name-pattern", pattern, target], { cwd, stdio: ["ignore", 2, 2] });
-		const rows = readFileSync(output, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
-		const selected = rows.filter((row) => row.name === name && !row.skipped);
-		if (selected.length === 1) {
-			const row = selected[0];
-			if (row.passed && run.status === 0) return { state: "passed", detail: name };
-			if (run.status === 1 && row.code === "ERR_ASSERTION" && row.message?.split("\n")[0] === assertion) return { state: "failed assertion", detail: row.message };
-			if (row.failureType === "subtestsFailed") return { state: "inconclusive", detail: `"${name}" is a suite: name the test inside it that makes the assertion` };
-		}
-		return { state: "inconclusive", detail: rows.find((row) => row.message)?.message ?? "Selected test did not produce one completed result" };
+		return runNamedTest({ cwd, file: target, name, assertion, output: join(scratch, side + ".jsonl") });
 	}
 
 	function observe(revision, side) {

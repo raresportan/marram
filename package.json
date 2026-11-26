@@ -14,7 +14,7 @@
     "prepare": "git config core.hooksPath .githooks || true",
     "gate": "marram gate",
     "gate:fast": "marram gate fast",
-    "guard-fixtures": "node scripts/guard-fixtures.mjs",
+    "probes": "marram probe",
     "gate:full": "marram gate full",
     "typecheck": "tsc -p packages/marram",
     "test": "npm test -w @raresportan/marram"

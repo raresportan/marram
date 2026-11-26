@@ -272,6 +272,7 @@ changed in its guards since the merge base:
   them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
   unchanged command, or a script changed along with the stage's arguments, shows what now runs;
 - the files in `core.hooksPath`, tracked or not;
+- probes (`probes.faults`): faults removed or added, a field of one changed, or its patch's contents;
 - citations removed from each feature map named with `--map <path>`, relative to where you run it.
 
 Like map-diff, it reports and exits 0, leaving the decision to the reviewer. It doesn't read test files or follow a
@@ -310,14 +311,40 @@ counterIpc.handle((channel, handler) => ipcMain.handle(channel, (event, ...args)
 }), handlers);
 ```
 
-### Testing the guards
+### Probes: does the gate still catch what it was built to catch?
 
-`npm run guard-fixtures` exercises three known mistakes in a disposable copy of Marram and Tally.
-Each probe runs the clean project first, introduces one fault, and checks for the diagnostic associated with that
-fault. The probes cover a shared cache verdict across nested projects, a missing IPC handler, and a restart check
-left in an uncalled helper. A setup error or unexpected diagnostic fails the experiment. This suite runs in the full
-gate and requires the same Electron environment as Tally's journeys.
-Each command gets five minutes; set `GUARD_FIXTURES_TIMEOUT_MS` to change that.
+Replay shows that a test caught a bug once. A probe keeps checking that the gate still catches it. Keep a patch that
+puts the defect back, made with `git diff > probes/no-rollback.patch` and then reverted, and name the check that must
+catch it:
+
+```js
+probes: {
+  setup: ["npm", "ci"],        // optional: run once in the copy, before the faults
+  link: ["node_modules"],      // optional: ignored paths shared from the working tree instead of rebuilt
+  timeoutMs: 300000,           // optional: for each command
+  faults: [
+    { name: "a failed transfer rolls back", patch: "probes/no-rollback.patch",
+      run: ["pytest", "tests/test_transfer.py"], expect: /balance unchanged/ },
+    { name: "a stored zero", patch: "probes/zero.patch",
+      test: { file: "test/store.test.mjs", name: "reads one", assertion: "stored value" } },
+  ],
+},
+```
+
+`marram probe` copies the working tree, uncommitted changes included, as the gate sees it. For each fault, the check
+runs clean and must pass. It runs again with the patch applied and must fail: a `run` command with output matching
+`expect` (a RegExp, or text it must contain), or a node:test `test` at the assertion with that message, judged as replay
+judges it. Each fault is reported caught, missed (the check passed with the defect in place, so that defect can pass the
+gate again), or inconclusive (the clean run failed, the patch no longer applies, or the check failed for another
+reason). The command exits 1 unless every fault is caught. `marram probe "<name>"` runs the faults named.
+
+Paths and commands are the project's; a fault's `cwd` changes where its command runs. Patches apply at the repository
+root, and each is taken back out with its files' times restored before the next fault, so a build tool doesn't see
+stale sources. A linked path is shared, not copied, and git refuses a patch that reaches through it.
+
+Marram probes three of its own guards this way, in the full gate: a shared cache verdict across nested projects, a
+missing IPC handler, and a restart check left in an uncalled helper. The patches are in `probes/`. They need the same
+Electron environment as Tally's journeys. Each command gets five minutes; set `PROBE_TIMEOUT_MS` to change that.
 
 ## Credit
 

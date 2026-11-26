@@ -92,8 +92,37 @@ function compareProject(before, now, project) {
 		if (kept.join("\0\0") !== keptNow.join("\0\0")) lines.push(`${tier}: order now ${keptNow.map((key) => current.get(key).name).join(", ")} (was ${kept.map((key) => old.get(key).name).join(", ")})`);
 	}
 	if (was.prePush !== is.prePush) lines.push(`prePush: ${was.prePush} → ${is.prePush}`);
+	lines.push(...probeChanges(before, now, project, was.faults, is.faults));
 	const all = (gate) => TIERS.flatMap((tier) => gate.tiers[tier]);
 	lines.push(...scriptChanges(before, now, project, all(was), all(is)));
+	return lines;
+}
+
+/** Probes (`probes.faults`) removed, added, or changed: a field of the fault, or the contents of its patch. */
+function probeChanges(before, now, project, wasFaults, isFaults) {
+	const lines = [];
+	const byName = (faults) => new Map(faults.map((fault) => [fault.name, fault]));
+	const [old, current] = [byName(wasFaults), byName(isFaults)];
+	for (const name of old.keys()) if (!current.has(name)) lines.push(`probe removed: ${name}`);
+	for (const name of current.keys()) if (!old.has(name)) lines.push(`probe added: ${name}`);
+	const value = (field, fault) => (field === "run" && Array.isArray(fault.run) ? shown(fault.run.map(String)) : field === "expect" ? fault.expect : JSON.stringify(fault[field]));
+	const patchAt = (top, path) => {
+		try {
+			return readFileSync(join(top, project, String(path)), "utf8");
+		} catch {
+			return undefined;
+		}
+	};
+	for (const [name, fault] of current) {
+		const previous = old.get(name);
+		if (previous === undefined) continue;
+		for (const field of ["patch", "cwd", "run", "expect", "test"]) {
+			if (JSON.stringify(fault[field]) !== JSON.stringify(previous[field])) lines.push(`probe ${name}: ${field} now ${value(field, fault)} (was ${value(field, previous)})`);
+		}
+		const [was, is] = [patchAt(before, previous.patch), patchAt(now, fault.patch)];
+		if (is === undefined) lines.push(`probe ${name}: patch ${fault.patch} is missing`);
+		else if (was !== is && fault.patch === previous.patch) lines.push(`probe ${name}: patch ${fault.patch} changed`);
+	}
 	return lines;
 }
 
@@ -117,17 +146,23 @@ const READ_GATE = `
 import { writeSync } from "node:fs";
 const answer = (value) => writeSync(3, JSON.stringify(value));
 try {
-	const gate = (await import(process.argv[1])).default?.gate ?? {};
+	const config = (await import(process.argv[1])).default ?? {};
+	const gate = config.gate ?? {};
 	const stages = (tier) => (Array.isArray(gate.tiers?.[tier]) ? gate.tiers[tier] : []).map(({ name, run, env }) => ({ name: String(name), run: Array.isArray(run) ? run.map(String) : [], env }));
-	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default" });
+	// A RegExp as its source, a string quoted, so the two can't compare equal.
+	const faults = (Array.isArray(config.probes?.faults) ? config.probes.faults : []).map((fault) => ({
+		name: String(fault?.name), patch: fault?.patch, cwd: fault?.cwd, run: fault?.run, test: fault?.test,
+		expect: fault?.expect instanceof RegExp ? String(fault.expect) : JSON.stringify(fault?.expect),
+	}));
+	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", faults });
 } catch (error) {
 	answer({ error: String(error?.message ?? error).split("\\n")[0] });
 }`;
 
-/** `{ tiers, prePush }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
+/** `{ tiers, prePush, faults }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
 function gateIn(top, project, where) {
 	const folder = join(top, project);
-	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default" };
+	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", faults: [] };
 	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000, stdio: ["ignore", "ignore", "ignore", "pipe"] });
 	const answer = result.output?.[3] ? JSON.parse(result.output[3]) : { error: result.error?.message ?? "it exited without giving its gate" };
 	return answer.error === undefined ? answer : { error: `couldn't load ${CONFIG} ${where}: ${answer.error}` };
