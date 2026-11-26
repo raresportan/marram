@@ -1,6 +1,7 @@
 // What Marram's own gate runs. Tally, the example, is a second project on these packages: its gate is part of this one.
 const npm = (name, ...args) => ({ name, run: ["npm", ...args] });
-const fast = [npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }];
+// The package's TypeScript is compiled first: Tally, like any project on it, imports what it publishes.
+const fast = [npm("build", "run", "build", "-w", "@raresportan/marram"), npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }];
 const tally = (tier) => ({ name: "tally", run: ["npm", "run", tier, "-w", "tally"] });
 
 export default {
@@ -11,7 +12,7 @@ export default {
 	// Known defects each guard was built to catch, put back one at a time in a copy of the working tree (marram probe).
 	probes: {
 		link: ["node_modules"],
-		setup: ["npm", "run", "build", "-w", "tally"],
+		setup: ["npm", "run", "build", "-w", "@raresportan/marram", "-w", "tally"],
 		// Tally's build and journeys can take minutes on a cold CI machine.
 		timeoutMs: Number(process.env.PROBE_TIMEOUT_MS) || 300_000,
 		faults: [

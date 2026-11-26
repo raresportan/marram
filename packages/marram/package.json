@@ -9,7 +9,7 @@
     "url": "git+https://github.com/raresportan/marram.git",
     "directory": "packages/marram"
   },
-  "files": ["src", "bin"],
+  "files": ["src/**/*.mjs", "src/**/*.js", "src/**/*.d.ts", "src/**/*.d.mts", "bin"],
   "bin": {
     "marram": "bin/marram.mjs"
   },
@@ -21,22 +21,24 @@
     "./core/check-lint": "./src/core/check-lint.mjs",
     "./core/no-comments": "./src/core/no-comments.mjs",
     "./core/ratchet": "./src/core/ratchet.mjs",
-    "./core/until": "./src/core/until.ts",
-    "./node/background": "./src/node/background.ts",
+    "./core/until": { "types": "./src/core/until.d.ts", "default": "./src/core/until.js" },
+    "./node/background": { "types": "./src/node/background.d.ts", "default": "./src/node/background.js" },
     "./node/promise-lint": "./src/node/promise-lint.mjs",
     "./node/resource-lint": "./src/node/resource-lint.mjs",
-    "./node/scope": "./src/node/scope.ts",
+    "./node/scope": { "types": "./src/node/scope.d.ts", "default": "./src/node/scope.js" },
     "./react/effect-lint": "./src/react/effect-lint.mjs",
-    "./react/keyed": "./src/react/keyed.ts",
-    "./electron/feature-map": "./src/electron/feature-map.ts",
-    "./electron/frames": "./src/electron/frames.ts",
-    "./electron/geometry": "./src/electron/geometry.ts",
+    "./react/keyed": { "types": "./src/react/keyed.d.ts", "default": "./src/react/keyed.js" },
+    "./electron/feature-map": { "types": "./src/electron/feature-map.d.ts", "default": "./src/electron/feature-map.js" },
+    "./electron/frames": { "types": "./src/electron/frames.d.ts", "default": "./src/electron/frames.js" },
+    "./electron/geometry": { "types": "./src/electron/geometry.d.ts", "default": "./src/electron/geometry.js" },
     "./electron/journey-lint": "./src/electron/journey-lint.mjs",
-    "./electron/run": "./src/electron/run.ts",
-    "./electron/ipc": "./src/electron/ipc.ts",
-    "./electron/session": "./src/electron/session.ts"
+    "./electron/run": { "types": "./src/electron/run.d.ts", "default": "./src/electron/run.js" },
+    "./electron/ipc": { "types": "./src/electron/ipc.d.ts", "default": "./src/electron/ipc.js" },
+    "./electron/session": { "types": "./src/electron/session.d.ts", "default": "./src/electron/session.js" }
   },
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "engines": {

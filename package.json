@@ -11,7 +11,8 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks || true",
+    "prepare": "npm run hooks && npm run build -w @raresportan/marram",
+    "hooks": "node -e \"try { require('child_process').execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { stdio: 'ignore' }) } catch {}\"",
     "gate": "marram gate",
     "gate:fast": "marram gate fast",
     "probes": "marram probe",
