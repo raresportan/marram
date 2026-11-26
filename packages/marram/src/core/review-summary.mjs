@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { commitsIn, reviewFindings } from "./commit-lint.mjs";
+import { commitsIn, reviewFindings, subjectsOf } from "./commit-lint.mjs";
 
 function githubRepository(root) {
 	const remote = spawnSync("git", ["remote", "get-url", "origin"], { cwd: root, encoding: "utf8" });
@@ -7,7 +7,8 @@ function githubRepository(root) {
 	return match && `https://github.com/${match[1]}`;
 }
 
-export function reviewSummary(root, _config, args) {
+export function reviewSummary(root, config, args) {
+	const subjects = subjectsOf(config);
 	let range = "HEAD";
 	if (args.length) {
 		if (args.length !== 2 || args[0] !== "--since" || !args[1]) throw new Error("Usage: marram review-summary [--since <ref>]");
@@ -21,7 +22,7 @@ export function reviewSummary(root, _config, args) {
 	let missing = 0;
 	for (const [hash, message] of commitsIn(root, range)) {
 		const ref = repo ? `${repo}/commit/${hash}` : hash.slice(0, 12);
-		for (const block of reviewFindings(message)) {
+		for (const block of reviewFindings(message, subjects)) {
 			const annotation = /\bClass: ([\w-]+(?:\/[\w-]+)*)\b[^\n]*?\bRung: ([\w-]+)\b([^\n]*)/.exec(block.join("\n"));
 			if (!annotation) continue;
 			const [, classes, rung, detail] = annotation;

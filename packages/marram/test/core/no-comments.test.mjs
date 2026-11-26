@@ -24,4 +24,29 @@ test("doc comments, license headers and links aren't", () => {
 
 test("text that looks like a comment isn't one", () => {
 	assert.deepEqual(found("const a = '// not one'; const b = `/* nor this */`;"), []);
+	const jsx = (code) => comments(ts.createSourceFile("x.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)).map(({ line }) => line);
+	assert.deepEqual(jsx("const a = <p>see // here, /* and here */</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>// not one</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>\n\t// not one\n</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>{x}/* not one */<b>a</b>// nor this</p>;"), []);
+	assert.deepEqual(jsx("const a = <p>{/* one */}</p>;\nconst b = <p>hi</p>; // and one"), [1, 2]);
+});
+
+test("a comment inside an expression, after a token rather than a node, is flagged", () => {
+	assert.deepEqual(found("call(// why\n\t1,\n);"), [1]);
+	assert.deepEqual(found("const a = cond ? /* why */ 1 : 2;"), [1]);
+});
+
+test("a doc comment counts only on a declaration a reader looks up, not in a function's body or on a statement", () => {
+	assert.deepEqual(found(`function f() {\n\t/** workaround */\n\treturn 1;\n}`), [2]);
+	assert.deepEqual(found(`function f() {\n\t/** workaround */\n\tconst a = 1;\n\treturn a;\n}`), [2]);
+	assert.deepEqual(found(`const a = 1; /** after it */`), [1]);
+	assert.deepEqual(found(`/** not a declaration */\nrun();`), [1]);
+	assert.deepEqual(found(`const a = /** inside */ 1;`), [1]);
+});
+
+test("a doc comment on a module's, a class's, an interface's or an object's members counts", () => {
+	assert.deepEqual(found(`/** A. */\nfunction a() {}\n/** B. */\nexport class B {\n\t/** C. */\n\tc = 1;\n\t/** D. */\n\td() {}\n}`), []);
+	assert.deepEqual(found(`/** T. */\ninterface T {\n\t/** U. */\n\tu: number;\n}\n/** V. */\ntype V = T;\n/** E. */\nenum E {\n\t/** F. */\n\tF,\n}`), []);
+	assert.deepEqual(found(`export default {\n\t/** How long. */\n\ttimeoutMs: 1,\n};`), []);
 });

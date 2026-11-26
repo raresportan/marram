@@ -116,7 +116,9 @@ Point git at them with `git config core.hooksPath .githooks`. For Claude Code, r
 ```
 
 Start with the classes you've actually seen. A commit whose subject fixes review findings then needs a line per
-finding, or the `commit-msg` hook refuses it:
+finding, or the `commit-msg` hook refuses it. That's a subject naming review findings, gaps, comments, feedback, notes,
+nits or suggestions (PR or pull request ones too), or addressing, applying, resolving or handling review or feedback. A
+project that words these its own way sets `review.subjects` to a pattern:
 
 ```
 Class: state. Rung: lint (rules fails without it)
@@ -209,7 +211,8 @@ keeps the same count.
 Add `acquisitions`, `effectSets` and `lintPromises` from its `node` and `react` parts the same way.
 
 To keep agents from leaving explanations in place of fixes, `@raresportan/marram/core/no-comments` is a finder for the same rule.
-It accepts doc comments on declarations, license headers and comments with a link.
+It accepts doc comments on declarations outside a function's body (in a module, a class, an interface or an object), license
+headers and comments with a link. A `/** … */` comment on a statement or inside a function is flagged like any other.
 
 ### 6. The first journey
 
