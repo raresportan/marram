@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isTestFile, testsIn } from "../../src/core/test-inventory.mjs";
 
-const summary = (path, source) => testsIn(path, source).map(({ name, skipped, assertions }) => `${name}${skipped ? " (skipped)" : ""}: ${assertions}`);
+const summary = (path, source) => testsIn(path, source).map(({ name, skipped, only, assertions }) => `${name}${skipped ? " (skipped)" : ""}${only ? " (only)" : ""}: ${assertions}`);
 
 test("test files are recognized by the usual names, and only in languages that can be read", () => {
 	for (const path of ["a.test.mjs", "src/b.spec.ts", "test/c.mjs", "pkg/tests/d.cjs", "__tests__/e.jsx", "test_f.py", "g_test.py", "tests/h.py", "i_test.go"]) assert.equal(isTestFile(path), true, path);
@@ -111,4 +111,75 @@ func helper(t *testing.T) { t.Fatal("not a test") }
 
 test("a file in a language it can't read has no tests it can name", () => {
 	assert.equal(testsIn("spec/a.rb", "it 'works' do end"), undefined);
+});
+
+test("a .test() call on a pattern isn't a test, and a subtest on the test's own context is", () => {
+	const source = `
+test("matches", async (t) => {
+	assert.ok(/re/.test("bar"));
+	assert.ok(pattern.test("abc"));
+	await t.test("a subtest", () => assert.ok(true));
+});
+it("checks", function (context) {
+	helper.test("not on this test's context", () => {});
+	other.it("nor this", () => {});
+});
+`;
+	assert.deepEqual(summary("a.test.mjs", source), ["matches: 3", "matches › a subtest: 1", "checks: 0"]);
+});
+
+test("a test or suite run alone (.only, an f prefix, { only: true }) is marked, and its tests with it", () => {
+	const source = `
+it.only("alone", () => assert.ok(1));
+fit("also alone", () => assert.ok(1));
+describe.only("suite", () => it("inside", () => assert.ok(1)));
+fdescribe("other suite", () => it("inside too", () => assert.ok(1)));
+test("by option", { only: true }, () => assert.ok(1));
+test("not alone", { only: false }, () => assert.ok(1));
+`;
+	assert.deepEqual(summary("a.test.mjs", source), [
+		"alone (only): 1",
+		"also alone (only): 1",
+		"suite › inside (only): 1",
+		"other suite › inside too (only): 1",
+		"by option (only): 1",
+		"not alone: 1",
+	]);
+});
+
+test("a Python skip decorator over several lines, or before one that is, still skips its test", () => {
+	const source = `
+@pytest.mark.skip(
+    reason="flaky",
+)
+def test_one():
+    assert True
+
+@pytest.mark.skip(reason="slow")
+@pytest.mark.parametrize(
+    "value",
+    [1, 2],
+)
+def test_two(value):
+    assert value
+
+def test_three():
+    assert True
+`;
+	assert.deepEqual(summary("test_a.py", source), ["test_one (skipped): 1", "test_two (skipped): 1", "test_three: 1"]);
+});
+
+test("a Go raw string is raw: a backslash at its end doesn't swallow the tests after it", () => {
+	const source = [
+		"func TestPath(t *testing.T) {",
+		"	if dir() != `C:\\` { t.Error(\"not C\") }",
+		"}",
+		"",
+		"func TestTemplate(t *testing.T) {",
+		"	if name() != `\${x}` { t.Fatal(\"not x\") }",
+		"}",
+		"",
+		"func TestLast(t *testing.T) { t.Error(\"last\") }",
+	].join("\n");
+	assert.deepEqual(summary("a_test.go", source), ["TestPath: 1", "TestTemplate: 1", "TestLast: 1"]);
 });

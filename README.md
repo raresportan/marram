@@ -274,8 +274,8 @@ changed in its guards since the merge base:
 - the files in `core.hooksPath`, tracked or not;
 - probes: faults removed or added, a field of one changed, or its patch's contents, and the `setup`, `link` and
   `timeoutMs` that prepare their copy;
-- tests in the test files the branch changed: tests removed, newly skipped, or making fewer assertions, and test files
-  removed or renamed to a name that isn't a test file's;
+- tests in the test files the branch changed: tests removed, newly skipped, newly run alone (`.only`), or making fewer
+  assertions, and test files removed or renamed to a name that isn't a test file's;
 - citations removed from each feature map named with `--map <path>`, relative to where you run it.
 
 Like map-diff, it reports and exits 0, leaving the decision to the reviewer.
@@ -283,7 +283,9 @@ Like map-diff, it reports and exits 0, leaving the decision to the reviewer.
 Tests are read from each revision's source, not run. A test file is one with the usual names: `*.test.*`, `*.spec.*`,
 anything under a `test`, `tests`, `__tests__` or `spec` folder, `test_*.py`, `*_test.py` and `*_test.go`. Tests are
 read in JavaScript and TypeScript (node:test, Jest, Vitest and Mocha: `describe`, `suite`, `context`, `test`, `it` and
-`specify`, skipped with `.skip`, `.todo`, an `x` prefix or `{ skip }`), Python (pytest and unittest: `def test_…`, in
+`specify`, skipped with `.skip`, `.todo`, an `x` prefix or `{ skip }`, run alone with `.only`, an `f` prefix or
+`{ only }`; a call on another object, such as `pattern.test("…")`, isn't a test unless it's on the enclosing test's
+context, as node:test's subtests are), Python (pytest and unittest: `def test_…`, in
 classes too, skipped with a `skip`, `skipif` or `xfail` decorator) and Go (`func TestX(t *testing.T)`, skipped with
 `t.Skip`). An assertion is a call to `assert…` or `expect(…)`, `self.assert…` or `pytest.raises(…)`, or `t.Error…`,
 `t.Fatal…`, `assert.…` and `require.…`. A skip or an assertion made as a test runs or in a helper it calls isn't seen,

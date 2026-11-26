@@ -1,5 +1,5 @@
 // The tests a test file declares, read from its source without running it: each one's name (within its suites or
-// class), whether it's skipped, and how many assertions its body makes. guard-diff compares them across revisions, so
+// class), whether it's skipped or run alone, and how many assertions its body makes. guard-diff compares them across revisions, so
 // a test removed, skipped or emptied of its assertions shows up in review. It reads what's written: a skip decided as
 // the test runs, or an assertion made in a helper it calls, isn't seen.
 import { posix } from "node:path";
@@ -23,7 +23,7 @@ export function isTestFile(path) {
 }
 
 /**
- * `[{ name, key, skipped, assertions }]` for the tests in `source`, in order, or undefined for a language it can't read.
+ * `[{ name, key, skipped, only, assertions }]` for the tests in `source`, in order, or undefined for a language it can't read.
  * `key` tells a test apart from another of the same name: its name and which occurrence of that name it is.
  */
 export function testsIn(path, source) {
@@ -44,9 +44,10 @@ const CLOSE = "\u0003";
 /**
  * `source` with its comments taken out, each string or template literal replaced by OPEN + its index + CLOSE, and each
  * regular expression literal by "R", so brackets and calls can be found in what's left. `strings` holds the literals'
- * text. A template's `${…}` stays in its text.
+ * text. A template's `${…}` stays in its text. With `go`, a backtick string is raw (no escapes, no `${…}`) and there
+ * are no regular expression literals.
  */
-function masked(source) {
+function masked(source, { go = false } = {}) {
 	let code = "";
 	const strings = [];
 	let i = 0;
@@ -66,6 +67,11 @@ function masked(source) {
 			for (i++; i < source.length && source[i] !== c && source[i] !== "\n"; i++) text += source[i] === "\\" ? source[++i] : source[i];
 			i++;
 			code += OPEN + (strings.push(text) - 1) + CLOSE;
+		} else if (c === "`" && go) {
+			const end = source.indexOf("`", i + 1);
+			const stop = end === -1 ? source.length : end;
+			code += OPEN + (strings.push(source.slice(i + 1, stop)) - 1) + CLOSE;
+			i = stop + 1;
 		} else if (c === "`") {
 			let text = "";
 			for (i++; i < source.length && source[i] !== "`"; i++) {
@@ -82,7 +88,7 @@ function masked(source) {
 			}
 			i++;
 			code += OPEN + (strings.push(text) - 1) + CLOSE;
-		} else if (c === "/" && (previous() === "" || "(,=:[!&|?{};+-*%<>~^".includes(previous()) || ["return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "yield", "await", "else", "do"].includes(previousWord()))) {
+		} else if (c === "/" && !go && (previous() === "" || "(,=:[!&|?{};+-*%<>~^".includes(previous()) || ["return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "yield", "await", "else", "do"].includes(previousWord()))) {
 			let inClass = false;
 			for (i++; i < source.length && source[i] !== "\n"; i++) {
 				if (source[i] === "\\") i++;
@@ -113,34 +119,51 @@ function closing(code, open) {
 
 const count = (text, pattern) => text.match(pattern)?.length ?? 0;
 
-/** node:test, Jest, Vitest and Mocha: describe, suite, context, test, it and specify, with .skip, .todo, x and { skip }. */
+/**
+ * node:test, Jest, Vitest and Mocha: describe, suite, context, test, it and specify, with .skip, .todo, x and { skip },
+ * and .only, f and { only } to run one alone. A call on something (`pattern.test("abc")`) is a method, not a test,
+ * unless it's on an enclosing test's context, as node:test's subtests are (`t.test("…")` in `(t) => …`).
+ */
 function javascript(source) {
 	const { code, strings } = masked(source);
 	const calls = [];
-	const call = new RegExp(`\\b(x?)(describe|suite|context|test|it|specify)((?:\\s*\\.\\s*\\w+)*)\\s*\\(\\s*${OPEN}(\\d+)${CLOSE}`, "g");
+	const call = new RegExp(`\\b([xf]?)(describe|suite|context|test|it|specify)((?:\\s*\\.\\s*\\w+)*)\\s*\\(\\s*${OPEN}(\\d+)${CLOSE}`, "g");
+	const unless = (option) => new RegExp(`\\b${option}\\s*:(?!\\s*(?:false|0|null|undefined)\\b)`);
 	for (const match of code.matchAll(call)) {
 		const chain = match[3].split(".").map((part) => part.trim()).filter(Boolean);
 		if (chain.includes("each")) continue;
+		const before = code.slice(0, match.index).trimEnd();
 		const open = match.index + match[0].lastIndexOf("(");
 		const close = closing(code, open);
-		const nameEnd = match.index + match[0].length;
-		// Options come before the function: { skip: … } or { todo: … }, unless it's false.
-		const head = code.slice(nameEnd, close).split(/=>|\bfunction\b/)[0];
-		const optionSkip = /\b(skip|todo)\s*:(?!\s*(?:false|0|null|undefined)\b)/.test(head);
+		const args = code.slice(match.index + match[0].length, close);
+		// The callback is whatever comes first, an arrow or a function; options come before it.
+		const arrow = args.indexOf("=>");
+		const fn = args.search(/\bfunction\b/);
+		const callback = arrow === -1 ? fn : fn === -1 ? arrow : Math.min(arrow, fn);
+		const head = callback === -1 ? args : args.slice(0, callback);
+		const param = callback === arrow
+			? (/\(\s*(\w+)[^()]*\)\s*$/.exec(head) ?? /\b(\w+)\s*$/.exec(head))?.[1]
+			: /^function\b\s*\w*\s*\(\s*(\w+)/.exec(args.slice(callback))?.[1];
 		calls.push({
 			suite: ["describe", "suite", "context"].includes(match[2]),
 			name: strings[Number(match[4])],
+			receiver: before.endsWith(".") ? (/(\w+)\s*\.$/.exec(before)?.[1] ?? "") : undefined,
+			param,
 			open,
 			close,
-			skipped: match[1] === "x" || chain.includes("skip") || chain.includes("todo") || optionSkip,
+			skipped: match[1] === "x" || chain.includes("skip") || chain.includes("todo") || unless("skip").test(head) || unless("todo").test(head),
+			only: match[1] === "f" || chain.includes("only") || unless("only").test(head),
 			assertions: count(code.slice(open, close), /\b(?:assert(?:\.\w+)?|expect)\s*\(/g),
 		});
 	}
-	return calls.filter((found) => !found.suite).map((found) => {
-		const around = calls.filter((other) => other !== found && other.open < found.open && found.close <= other.close);
+	const encloses = (outer, inner) => outer !== inner && outer.open < inner.open && inner.close <= outer.close;
+	const real = calls.filter((found) => found.receiver === undefined || calls.some((outer) => encloses(outer, found) && !outer.suite && outer.param === found.receiver));
+	return real.filter((found) => !found.suite).map((found) => {
+		const around = real.filter((outer) => encloses(outer, found));
 		return {
-			name: [...around.map((other) => other.name), found.name].join(" › "),
-			skipped: found.skipped || around.some((other) => other.skipped),
+			name: [...around.map((outer) => outer.name), found.name].join(" › "),
+			skipped: found.skipped || around.some((outer) => outer.skipped),
+			only: found.only || around.some((outer) => outer.only),
 			assertions: found.assertions,
 		};
 	});
@@ -148,7 +171,7 @@ function javascript(source) {
 
 /** Go: func TestX(t *testing.T), skipped by a t.Skip in its body, its assertions t.Error…, t.Fatal…, assert. and require. */
 function go(source) {
-	const { code } = masked(source);
+	const { code } = masked(source, { go: true });
 	const tests = [];
 	for (const match of code.matchAll(/\bfunc\s+(Test\w*)\s*\(\s*(\w+)\s+\*testing\.T\s*\)\s*\{/g)) {
 		const open = match.index + match[0].length - 1;
@@ -174,7 +197,11 @@ function python(source) {
 		const { indent, text } = lines[i];
 		while (classes.length > 0 && classes.at(-1).indent >= indent) classes.pop();
 		if (text.startsWith("@")) {
-			decorators.push(text);
+			// A decorator can run over several lines, as long as a bracket is open.
+			let decorator = text;
+			const depth = (line) => count(line, /[([{]/g) - count(line, /[)\]}]/g);
+			while (depth(decorator) > 0 && i + 1 < lines.length) decorator += " " + lines[++i].text;
+			decorators.push(decorator);
 			continue;
 		}
 		const klass = /^class\s+(\w+)/.exec(text);

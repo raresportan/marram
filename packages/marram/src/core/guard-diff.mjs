@@ -68,7 +68,7 @@ export async function guardDiff(cwd, args) {
 
 /**
  * Test files changed since the merge base (checked out in `before`), read on both sides: tests removed, newly skipped,
- * or making fewer assertions, and test files removed or renamed to a name that isn't a test file's. Compared with the
+ * newly run alone, or making fewer assertions, and test files removed or renamed to a name that isn't a test file's. Compared with the
  * working tree's whole tree, untracked files included, so a test file moved to a new name is a rename, not a removal.
  */
 function testChanges(repo, ancestor, before) {
@@ -81,18 +81,23 @@ function testChanges(repo, ancestor, before) {
 		const [from, to] = status === "R" || status === "C" ? [changes[++i], changes[++i]] : [changes[++i], changes[i]];
 		if (status === "A" || status === "C" || !isTestFile(from)) continue;
 		const was = testsIn(from, read(before, from));
+		// A helper beside the tests (test/helpers.mjs, tests/conftest.py) declares none: moving or removing it is no change.
 		if (status === "D") {
-			lines.push(`removed file ${from}: ${plural(was.length)}`);
+			if (was.length > 0) lines.push(`removed file ${from}: ${plural(was.length)}`);
 		} else if (!isTestFile(to)) {
-			lines.push(`no longer named as a test file: ${from} → ${to} (${plural(was.length)})`);
+			if (was.length > 0) lines.push(`no longer named as a test file: ${from} → ${to} (${plural(was.length)})`);
 		} else {
-			const is = new Map(testsIn(to, read(repo, to)).map((found) => [found.key, found]));
-			for (const old of was) {
-				const current = is.get(old.key);
-				if (current === undefined) lines.push(`removed: ${to} › ${old.name}`);
-				else if (current.skipped && !old.skipped) lines.push(`now skipped: ${to} › ${old.name}`);
-				else if (current.assertions < old.assertions) lines.push(`fewer assertions: ${to} › ${old.name} (${old.assertions} → ${current.assertions})`);
+			const now = testsIn(to, read(repo, to));
+			const is = new Map(now.map((found) => [found.key, found]));
+			const old = new Map(was.map((found) => [found.key, found]));
+			for (const previous of was) {
+				const current = is.get(previous.key);
+				if (current === undefined) lines.push(`removed: ${to} › ${previous.name}`);
+				else if (current.skipped && !previous.skipped) lines.push(`now skipped: ${to} › ${previous.name}`);
+				else if (current.assertions < previous.assertions) lines.push(`fewer assertions: ${to} › ${previous.name} (${previous.assertions} → ${current.assertions})`);
 			}
+			// Run alone, a test stops the file's others running under Jest, Vitest and Mocha (node:test with --test-only).
+			for (const current of now) if (current.only && !old.get(current.key)?.only) lines.push(`now only: ${to} › ${current.name}`);
 		}
 	}
 	return lines;
