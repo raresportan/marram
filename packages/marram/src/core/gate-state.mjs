@@ -1,7 +1,7 @@
 // What the gate said about each state of the working tree, so a hook doesn't run it again for code it has judged.
 // Kept in the repository's git folder (shared by its worktrees): marram-gate.json.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -18,9 +18,15 @@ export function treeOf(cwd) {
 	const dir = mkdtempSync(join(tmpdir(), "marram-gate-"));
 	const index = join(dir, "index");
 	try {
-		// A copy of the real index, so unchanged files aren't hashed again.
+		// A copy of the real index, so unchanged files aren't hashed again. With its times: git trusts a file whose size
+		// and mtime match its entry unless the entry is as new as the index file, and a copy made now would hide a
+		// same-size edit made in the second that entry was recorded.
 		const real = resolve(cwd, git(cwd, ["rev-parse", "--git-path", "index"]));
-		if (existsSync(real)) copyFileSync(real, index);
+		if (existsSync(real)) {
+			copyFileSync(real, index);
+			const { atime, mtime } = statSync(real);
+			utimesSync(index, atime, mtime);
+		}
 		git(cwd, ["add", "-A"], { GIT_INDEX_FILE: index });
 		return git(cwd, ["write-tree"], { GIT_INDEX_FILE: index });
 	} finally {
