@@ -383,11 +383,15 @@ Marram is a separate project, with no code from it.
 - **It can't judge.** The commit lint checks that a class and a rung are named, not that they're right.
 - **Hooks can be skipped.** `--no-verify` skips them. There's no server-side enforcement unless your CI runs the gate,
   as Marram's own does (see Developing Marram).
-- **It ships TypeScript sources.** Your build has to bundle what your app imports from it, and scripts run with `tsx`.
 
 ## Developing Marram
 
 `npm run gate` runs the packages' tests and Tally's own gate. A change to a rule comes with a test that fails without it.
+
+The package's TypeScript modules are compiled in place, to `.js` and `.d.ts` beside each `.ts`, by
+`npm run build -w @raresportan/marram`. `npm install` runs it, the gate runs it first, and `npm pack` runs it again.
+Only the compiled files are published, so a project on Marram runs it in plain Node and with any bundler. Tally imports
+the compiled files too, so after editing a `.ts` file outside the gate, build before running Tally.
 
 CI (`.github/workflows/gate.yml`) runs `npm run gate:full` on every pull request and on main, on Ubuntu under
 `xvfb-run` and on Windows, and keeps each platform's gate logs when it fails. On Windows, a command a stage, probe or

@@ -1,7 +1,7 @@
 // Exercise the published package from an isolated consumer, where workspace UI dependencies cannot resolve.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -45,6 +45,41 @@ process.exitCode = passed ? 0 : 1;
 		assert.equal(gate().status, 1);
 		const [journey] = JSON.parse(readFileSync(join(root, ".verify/evidence/report.json")));
 		assert.deepEqual(journey.checks, [{ label: "prints greeting", ok: false }]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("the published package has no TypeScript sources: its TypeScript modules run in plain Node and typecheck from their declarations", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-built-"));
+	try {
+		const pkg = resolve(import.meta.dirname, "../..");
+		const build = spawnable("npm", ["run", "build"]);
+		execFileSync(build.file, build.args, { ...build.options, cwd: pkg, stdio: "ignore" });
+		const pack = spawnable("npm", ["pack", "--offline", "--ignore-scripts", "--json", "--pack-destination", root, "--cache", join(root, ".npm")]);
+		const [packed] = JSON.parse(execFileSync(pack.file, pack.args, { ...pack.options, cwd: pkg, encoding: "utf8" }));
+		// Node won't strip types from a file under node_modules, so a .ts there can't run.
+		assert.deepEqual(packed.files.map(({ path }) => path).filter((path) => /\.[cm]?ts$/.test(path) && !/\.d\.[cm]?ts$/.test(path)), []);
+		const installed = join(root, "node_modules/@raresportan/marram");
+		mkdirSync(installed, { recursive: true });
+		execFileSync("tar", ["-xf", join(root, packed.filename), "--strip-components=1", "-C", installed]);
+		const { exports } = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+		const compiled = Object.entries(exports).filter(([, target]) => typeof target === "object");
+		assert.ok(compiled.length > 0);
+		for (const [name, { types, default: file }] of compiled) {
+			assert.ok(existsSync(join(installed, types)) && existsSync(join(installed, file)), `${name}: ${types} and ${file} are published`);
+		}
+		// The ones that need no optional peer (React, Playwright), imported as a project would.
+		const plain = ["./core/until", "./node/background", "./node/scope", "./electron/ipc", "./electron/run", "./electron/feature-map", "./electron/geometry"];
+		writeFileSync(join(root, "package.json"), '{ "type": "module" }');
+		writeFileSync(join(root, "use.mjs"), plain.map((name, i) => `import * as m${i} from "@raresportan/marram${name.slice(1)}"; if (!Object.keys(m${i}).length) throw Error("${name}");`).join("\n"));
+		const imported = spawnSync(process.execPath, ["use.mjs"], { cwd: root, encoding: "utf8" });
+		assert.equal(imported.status, 0, imported.stderr);
+		writeFileSync(join(root, "use.ts"), 'import { until } from "@raresportan/marram/core/until";\nimport { background } from "@raresportan/marram/node/background";\nimport { Scope } from "@raresportan/marram/node/scope";\nimport { defineIpc } from "@raresportan/marram/electron/ipc";\nexport const all: unknown[] = [until, background, Scope, defineIpc];\n');
+		const types = resolve(pkg, "../../node_modules/@types");
+		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "NodeNext", strict: true, noEmit: true, typeRoots: [types], types: ["node"] }, files: ["use.ts"] }));
+		const tsc = spawnSync(process.execPath, [resolve(pkg, "../../node_modules/typescript/bin/tsc"), "-p", root], { cwd: root, encoding: "utf8" });
+		assert.equal(tsc.status, 0, tsc.stdout + tsc.stderr);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
