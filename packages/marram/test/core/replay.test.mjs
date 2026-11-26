@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -128,6 +128,74 @@ test("replay refuses a setup that isn't a command and its arguments", () => {
 		assert.equal(result.status, 1);
 		assert.equal(result.stdout, "");
 		assert.match(result.stderr, /replay\.setup in marram\.config\.mjs must be a command and its arguments/);
+	} finally {
+		repo.remove();
+	}
+});
+
+/** Code that waits a minute, writing `file` after a second and a half if it's still running then. */
+const lingers = (file) => `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(file)}, "still running"), 1500); setTimeout(() => {}, 60000);`;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+test("a setup that doesn't finish in replay.timeoutMs is stopped, and the side is inconclusive", () => {
+	const repo = repository();
+	const outside = mkdtempSync(join(tmpdir(), "replay-outside-"));
+	try {
+		const setup = ["node", "-e", lingers(join(outside, "setup"))];
+		writeFileSync(join(repo.root, "marram.config.mjs"), `export default { replay: { setup: ${JSON.stringify(setup)}, timeoutMs: 500 } }`);
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 0");
+		const base = repo.commit();
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 1");
+		writeFileSync(join(repo.root, "probe.cjs"), PROBE);
+		repo.commit();
+		const started = Date.now();
+		const result = repo.replay(base, "probe.cjs");
+		assert.ok(Date.now() - started < 20_000, "replay waited for the setup");
+		assert.equal(result.status, 1);
+		const { base: before, candidate } = JSON.parse(result.stdout);
+		assert.equal(before.detail, "Setup didn't finish within 500 ms");
+		assert.equal(candidate.detail, "Setup didn't finish within 500 ms");
+		pause(2000);
+		assert.equal(existsSync(join(outside, "setup")), false, "the setup was left running");
+	} finally {
+		repo.remove();
+		rmSync(outside, { recursive: true, force: true });
+	}
+});
+
+test("a test that doesn't finish in replay.timeoutMs is stopped, with what it started, and the side is inconclusive", () => {
+	const repo = repository();
+	const outside = mkdtempSync(join(tmpdir(), "replay-outside-"));
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), "export default { replay: { timeoutMs: 500 } }");
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 0");
+		const base = repo.commit();
+		writeFileSync(join(repo.root, "probe.cjs"), `require("node:test")("reads one", () => new Promise(() => { ${lingers(join(outside, "test"))} }));`);
+		repo.commit();
+		const started = Date.now();
+		const result = repo.replay(base, "probe.cjs");
+		assert.ok(Date.now() - started < 20_000, "replay waited for the test");
+		assert.equal(result.status, 1);
+		const { base: before, candidate } = JSON.parse(result.stdout);
+		assert.equal(before.detail, "The test didn't finish within 500 ms");
+		assert.equal(candidate.detail, "The test didn't finish within 500 ms");
+		pause(2000);
+		assert.equal(existsSync(join(outside, "test")), false, "the test was left running");
+	} finally {
+		repo.remove();
+		rmSync(outside, { recursive: true, force: true });
+	}
+});
+
+test("replay refuses a timeout that isn't a positive number of milliseconds", () => {
+	const repo = repository();
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), 'export default { replay: { timeoutMs: "5m" } }');
+		writeFileSync(join(repo.root, "probe.cjs"), PROBE);
+		const base = repo.commit();
+		const result = repo.replay(base, "probe.cjs");
+		assert.equal(result.status, 1);
+		assert.match(result.stderr, /replay\.timeoutMs in marram\.config\.mjs must be a positive number of milliseconds/);
 	} finally {
 		repo.remove();
 	}

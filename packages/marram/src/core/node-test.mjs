@@ -13,6 +13,7 @@ const reporter = fileURLToPath(new URL("./replay-reporter.mjs", import.meta.url)
 export function runNamedTest({ cwd, file, name, assertion, output, timeout }) {
 	const pattern = "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
 	const run = spawnSync(process.execPath, ["--test", "--test-reporter", reporter, "--test-reporter-destination", output, "--test-name-pattern", pattern, file], { cwd, stdio: ["ignore", 2, 2], timeout });
+	if (run.error?.code === "ETIMEDOUT") return { state: "inconclusive", detail: `The test didn't finish within ${timeout} ms` };
 	if (run.error || run.status === null) return { state: "inconclusive", detail: run.error?.message ?? "The test didn't finish" };
 	const rows = existsSync(output) ? readFileSync(output, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
 	const selected = rows.filter((row) => row.name === name && !row.skipped);

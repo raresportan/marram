@@ -255,3 +255,16 @@ test("a patch with Windows line endings has its renamed files' times put back to
 		repo.remove();
 	}
 });
+
+test("a check that doesn't finish in probes.timeoutMs is stopped, and the fault is inconclusive", () => {
+	const repo = project(BY_COMMAND, "timeoutMs: 1000,");
+	try {
+		repo.write("check.cjs", `${CHECK}setTimeout(() => {}, 60000);\n`);
+		const started = Date.now();
+		const result = repo.probe();
+		assert.ok(Date.now() - started < 20_000, "probe waited for the check");
+		assert.match(result.stdout, /^\? a stored zero: inconclusive: the check fails without the fault: the check didn't finish within 1000 ms$/m, result.stdout + result.stderr);
+	} finally {
+		repo.remove();
+	}
+});

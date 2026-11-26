@@ -294,6 +294,9 @@ Skipped tests, setup errors, other failures, and checks that pass on both revisi
 
 If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
 Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.
+The setup and the test each get five minutes on each side; set `replay: { timeoutMs }` to change that. One that runs
+longer is stopped and that side is inconclusive. It's sent SIGTERM, so a setup script should pass that on to what it
+starts, as npm does.
 
 ### Typed Electron IPC
 

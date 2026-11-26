@@ -64,6 +64,7 @@ export function probe(root, config, names) {
 		}
 		if (setup !== undefined) {
 			const result = command(project, setup, timeoutMs);
+			if (result.error?.code === "ETIMEDOUT") throw new Error(`probes.setup didn't finish within ${timeoutMs} ms`);
 			if (result.status !== 0) throw new Error(`probes.setup failed: ${result.error?.message ?? excerpt(result.output)}`);
 		}
 		const verdicts = chosen.map((fault) => {
@@ -144,6 +145,7 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 			return { ...result, state: { passed: "passed", "failed assertion": "expected" }[result.state] ?? "other" };
 		}
 		const result = command(cwd, fault.run, timeoutMs);
+		if (result.error?.code === "ETIMEDOUT") return { state: "other", detail: `the check didn't finish within ${timeoutMs} ms` };
 		if (result.error || result.status === null) return { state: "other", detail: result.error?.message ?? "the check didn't finish" };
 		if (result.status === 0) return { state: "passed" };
 		const expected = fault.expect instanceof RegExp ? fault.expect.test(result.output) : result.output.includes(fault.expect);
