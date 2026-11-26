@@ -1,7 +1,7 @@
 // What the gate said about each state of the working tree, so a hook doesn't run it again for code it has judged.
 // Kept in the repository's git folder (shared by its worktrees): marram-gate.json.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -20,11 +20,32 @@ export function treeOf(cwd) {
 	try {
 		// A copy of the real index, so unchanged files aren't hashed again.
 		const real = resolve(cwd, git(cwd, ["rev-parse", "--git-path", "index"]));
-		if (existsSync(real)) copyFileSync(real, index);
+		if (existsSync(real)) copyIndex(real, index);
 		git(cwd, ["add", "-A"], { GIT_INDEX_FILE: index });
 		return git(cwd, ["write-tree"], { GIT_INDEX_FILE: index });
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Copy the index at `real` to `copy`, never newer than the index it copied. Git trusts a file whose size and mtime match
+ * its entry unless the entry is as new as the index file, so a newer copy would hide a same-size edit made in the second
+ * that entry was recorded. The contents and the time come from one open file: git replaces its index by renaming a new
+ * one over it, and reading the time by path could take the new index's time for the old contents. The time is that
+ * file's whole second, since a Date would round 0.9999 s up to the next one. Older only means more files are read again.
+ * `afterRead` runs between reading the contents and the time, for a test to replace the index there.
+ */
+export function copyIndex(real, copy, afterRead = () => {}) {
+	const fd = openSync(real, "r");
+	try {
+		const contents = readFileSync(fd);
+		afterRead();
+		const second = Number(fstatSync(fd, { bigint: true }).mtimeNs / 1_000_000_000n);
+		writeFileSync(copy, contents);
+		utimesSync(copy, second, second);
+	} finally {
+		closeSync(fd);
 	}
 }
 
