@@ -329,3 +329,44 @@ test("guard-diff reports how the probes' copy is prepared, and not a fault's tes
 		repo.remove();
 	}
 });
+
+test("guard-diff reports tests removed, newly skipped or with fewer assertions, and test files removed or renamed away", () => {
+	const repo = repository();
+	try {
+		const js = (...tests) => tests.join("\n") + "\n";
+		repo.write("packages/app/test/value.test.mjs", js(
+			'test("reads one", () => { assert.equal(read(), 1); assert.ok(read()); });',
+			'test("reads two", () => assert.equal(read(), 2));',
+			'test("reads three", () => assert.equal(read(), 3));',
+		));
+		repo.write("packages/app/tests/test_store.py", "def test_saves():\n    assert save()\n\ndef test_loads():\n    assert load()\n");
+		repo.write("packages/app/test/moved.test.mjs", js('test("moves", () => assert.ok(1));'));
+		repo.write("packages/app/test/hidden.test.mjs", js('test("hides", () => assert.ok(1));'));
+		repo.commit();
+		repo.write("packages/app/test/value.test.mjs", js(
+			'test("reads one", () => { assert.ok(read()); });',
+			'test.skip("reads two", () => assert.equal(read(), 2));',
+			'test("reads four", () => assert.equal(read(), 4));',
+		));
+		rmSync(join(repo.root, "packages/app/tests/test_store.py"));
+		repo.write("packages/app/test/renamed.test.mjs", js('test("moves", () => assert.ok(1));'));
+		rmSync(join(repo.root, "packages/app/test/moved.test.mjs"));
+		repo.write("packages/app/hidden.mjs", js('test("hides", () => assert.ok(1));'));
+		rmSync(join(repo.root, "packages/app/test/hidden.test.mjs"));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		const tests = result.stdout.split("\nTests\n")[1]?.split("\n\n")[0];
+		// In the order git lists the files: by path.
+		assert.equal(tests, [
+			"  no longer named as a test file: packages/app/test/hidden.test.mjs → packages/app/hidden.mjs (1 test)",
+			"  fewer assertions: packages/app/test/value.test.mjs › reads one (2 → 1)",
+			"  now skipped: packages/app/test/value.test.mjs › reads two",
+			"  removed: packages/app/test/value.test.mjs › reads three",
+			"  removed file packages/app/tests/test_store.py: 2 tests",
+		].join("\n"), result.stdout);
+		assert.doesNotMatch(result.stdout, /moved\.test|renamed\.test/, "a test file renamed with its tests is no change");
+		assert.doesNotMatch(result.stdout, /Not compared: test files/);
+	} finally {
+		repo.remove();
+	}
+});

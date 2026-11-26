@@ -2,7 +2,7 @@
 // Usage: marram guard-diff <base> [--map <feature map>]…
 // Compares the merge base with the working tree: each project's gate tiers (every marram.config.mjs in the repository),
 // its push requirement, the package scripts its stages run, its probes and how their copy is prepared, the files in
-// core.hooksPath, and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
+// core.hooksPath, the tests in changed test files (test-inventory.mjs), and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
 // repository rather than a project's configuration, so a configuration deleted or broken is reported, not fatal.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -10,12 +10,14 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkoutAt } from "./checkout.mjs";
+import { treeOf } from "./gate-state.mjs";
 import { removedCitations } from "./map-diff.mjs";
+import { isTestFile, testsIn } from "./test-inventory.mjs";
 
 const TIERS = ["fast", "default", "full"];
 const CONFIG = "marram.config.mjs";
 const USAGE = "Usage: marram guard-diff <base> [--map <feature map>]…";
-const BLIND = "Not compared: test files, the scripts a stage's script runs in turn, and checks a script chooses itself (its own list of tests or journeys).";
+const BLIND = "Not compared: a skip or an assertion made as a test runs or in a helper it calls, test files without the usual names, the scripts a stage's script runs in turn, and checks a script chooses itself (its own list of tests or journeys).";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
 /** Paths from a git command given -z: NUL-separated and never quoted, whatever characters they hold. */
@@ -49,6 +51,8 @@ export async function guardDiff(cwd, args) {
 			for (const file of paths(repo, "ls-files", "-z", "--others", "--exclude-standard", "--", hooksPath)) lines.push(`added ${posix.relative(hooksPath, file)}`);
 			if (lines.length > 0) sections.push([`Hooks (${hooksPath})`, lines.sort((a, b) => a.split(" ")[1].localeCompare(b.split(" ")[1]))]);
 		}
+		const tests = testChanges(repo, ancestor, before);
+		if (tests.length > 0) sections.push(["Tests", tests]);
 		for (const map of maps) {
 			const lines = removedCitations(cwd, ancestor, map).map(({ feature, citation }) => `removed: ${feature} — ${citation}`);
 			if (lines.length > 0) sections.push([`Feature map ${map}`, lines]);
@@ -60,6 +64,38 @@ export async function guardDiff(cwd, args) {
 	if (sections.length === 0) console.log(`No guard changes since ${since}.`);
 	else console.log(`Guard changes since ${since}:\n\n${sections.map(([title, lines]) => [title, ...lines.map((line) => "  " + line)].join("\n")).join("\n")}`);
 	console.log(`\n${BLIND}`);
+}
+
+/**
+ * Test files changed since the merge base (checked out in `before`), read on both sides: tests removed, newly skipped,
+ * or making fewer assertions, and test files removed or renamed to a name that isn't a test file's. Compared with the
+ * working tree's whole tree, untracked files included, so a test file moved to a new name is a rename, not a removal.
+ */
+function testChanges(repo, ancestor, before) {
+	const changes = paths(repo, "diff", "-z", "--name-status", "-M", ancestor, treeOf(repo));
+	const read = (top, path) => readFileSync(join(top, path), "utf8");
+	const plural = (n) => `${n} test${n === 1 ? "" : "s"}`;
+	const lines = [];
+	for (let i = 0; i < changes.length; i++) {
+		const status = changes[i][0];
+		const [from, to] = status === "R" || status === "C" ? [changes[++i], changes[++i]] : [changes[++i], changes[i]];
+		if (status === "A" || status === "C" || !isTestFile(from)) continue;
+		const was = testsIn(from, read(before, from));
+		if (status === "D") {
+			lines.push(`removed file ${from}: ${plural(was.length)}`);
+		} else if (!isTestFile(to)) {
+			lines.push(`no longer named as a test file: ${from} → ${to} (${plural(was.length)})`);
+		} else {
+			const is = new Map(testsIn(to, read(repo, to)).map((found) => [found.key, found]));
+			for (const old of was) {
+				const current = is.get(old.key);
+				if (current === undefined) lines.push(`removed: ${to} › ${old.name}`);
+				else if (current.skipped && !old.skipped) lines.push(`now skipped: ${to} › ${old.name}`);
+				else if (current.assertions < old.assertions) lines.push(`fewer assertions: ${to} › ${old.name} (${old.assertions} → ${current.assertions})`);
+			}
+		}
+	}
+	return lines;
 }
 
 /** The project in folder `project` (from the repository root) at the merge base, checked out in `before`, and now. */
