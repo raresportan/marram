@@ -7,7 +7,7 @@
 //
 // `ratchet` is the list's rules for any kind of site; `restrict` is the common case, sites found per file in a folder.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import ts from "typescript";
 
 /**
@@ -59,7 +59,8 @@ export function restrict({ root, folder, owners = [], find, allowed, list, fix, 
 	const base = join(root, folder);
 	const found = [];
 	for (const file of sourceFiles(base)) {
-		const key = relative(base, file);
+		// With forward slashes on every platform, as `allowed` and `owners` name files.
+		const key = relative(base, file).split(sep).join("/");
 		if (owners.includes(key)) continue;
 		const sites = find(parse(file));
 		if (sites.length === 0) continue;

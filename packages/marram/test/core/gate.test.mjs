@@ -49,7 +49,8 @@ async function gate(plan) {
 			report: JSON.parse(readFileSync(join(dir, "report.json"), "utf8")),
 		};
 	} finally {
-		rmSync(root, { recursive: true, force: true });
+		// Windows can hold a file the gate just wrote (an antivirus scan, say) for a moment.
+		rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 	}
 }
 

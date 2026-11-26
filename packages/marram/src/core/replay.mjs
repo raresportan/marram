@@ -1,8 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { checkoutAt } from "./checkout.mjs";
+import { dirname, join, relative, sep } from "node:path";
+import { checkoutAt, repoPath } from "./checkout.mjs";
 import { spawnable } from "./command.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
@@ -28,12 +28,12 @@ export function replay(root, config, args) {
 	const timeoutMs = config.replay?.timeoutMs ?? 300_000;
 	if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("replay.timeoutMs in marram.config.mjs must be a positive number of milliseconds");
 	const repo = git(root, "rev-parse", "--show-toplevel");
-	const project = relative(repo, root);
-	const path = relative(repo, resolve(root, file));
-	if (path === ".." || path.startsWith(".." + sep)) throw new Error("The selected check must be inside the repository");
+	const project = repoPath(root);
+	const path = repoPath(root, file);
+	if (path === ".." || path.startsWith("../")) throw new Error("The selected check must be inside the repository");
 	const candidate = git(root, "rev-parse", "HEAD");
 	const base = git(root, "rev-parse", "--verify", "--end-of-options", baseRef + "^{commit}");
-	const check = execFileSync("git", ["show", candidate + ":" + path.split(sep).join("/")], { cwd: root });
+	const check = execFileSync("git", ["show", `${candidate}:${path}`], { cwd: root });
 	const scratch = mkdtempSync(join(tmpdir(), "marram-replay-"));
 
 	function runCheck(revision, side) {
