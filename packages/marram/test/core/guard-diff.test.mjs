@@ -259,3 +259,32 @@ test("a removed stage is said to still run elsewhere only where the same command
 		}
 	}
 });
+
+test("a script is compared by the stage that runs it, even when that stage's arguments change too", () => {
+	const repo = repository();
+	try {
+		const quiet = { ...repo.appGate.tiers.default[1], run: ["npm", "run", "verify", "--silent"] };
+		const unit = repo.appGate.tiers.default[0];
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { fast: [], default: [unit, quiet], full: [unit, quiet] } }));
+		repo.write("packages/app/package.json", JSON.stringify({ name: "app", scripts: { ...repo.appScripts, verify: "node smoke.mjs" } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}default: journeys now runs npm run verify --silent \(was npm run verify\)$/m);
+		assert.match(result.stdout, /^ {2}script verify \(packages\/app\/package\.json\): node smoke\.mjs \(was node verify\.mjs\)$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("the pre and post scripts npm runs around a stage's script are compared too", () => {
+	const repo = repository();
+	try {
+		repo.write("packages/app/package.json", JSON.stringify({ name: "app", scripts: { ...repo.appScripts, pretest: "node integration.mjs", posttest: "node report.mjs" } }));
+		repo.commit();
+		repo.write("packages/app/package.json", JSON.stringify({ name: "app", scripts: { ...repo.appScripts, posttest: "true" } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}script pretest \(packages\/app\/package\.json\): removed \(was node integration\.mjs\)$/m);
+		assert.match(result.stdout, /^ {2}script posttest \(packages\/app\/package\.json\): true \(was node report\.mjs\)$/m);
+	} finally {
+		repo.remove();
+	}
+});

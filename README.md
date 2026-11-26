@@ -268,8 +268,9 @@ changed in its guards since the merge base:
   `env`;
 - `env` changes, by variable name only, since a value may be a token;
 - `gate.prePush`;
-- the `package.json` scripts a stage runs, including through `-w`, each found in its own revision, so a workspace
-  renamed under an unchanged command shows the script that now runs;
+- the `package.json` scripts a stage runs, including through `-w` and, for npm, the `pre` and `post` scripts around
+  them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
+  unchanged command, or a script changed along with the stage's arguments, shows what now runs;
 - the files in `core.hooksPath`, tracked or not;
 - citations removed from each feature map named with `--map <path>`, relative to where you run it.
 

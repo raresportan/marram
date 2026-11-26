@@ -135,8 +135,10 @@ function gateIn(top, project, where) {
 
 /**
  * Changes to the package scripts the stages run, found in each revision on its own: a script of the stage's package
- * (its workspace, named by -w or --workspace, or else the project's own) whose name is one of the stage's arguments.
- * A stage that runs on one side only is the tiers' to report.
+ * (its workspace, named by -w or --workspace, or else the project's own) whose name is one of the stage's arguments,
+ * and for npm the pre and post scripts it runs around it. A script is matched across revisions by the stage that runs
+ * it, so a stage whose arguments changed still has its script compared. A stage on one side only is the tiers' to
+ * report, and so is a stage that starts or stops running a script that's there on both sides.
  */
 function scriptChanges(before, now, project, wasStages, isStages) {
 	const scriptsAt = (top, folder) => {
@@ -146,31 +148,46 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 			return {};
 		}
 	};
-	/** Each stage's command and script name, to the package.json that holds that script and what it runs. */
+	/** Each stage name and script name, to the package that holds that script and what the script runs, if anything. */
 	const resolve = (top, stages) => {
 		const found = new Map();
-		for (const { run } of stages) {
+		for (const { name: stage, run } of stages) {
 			const folder = workspaceOf(top, project, run) ?? project;
 			const scripts = scriptsAt(top, folder);
-			for (const name of run.slice(1)) if (Object.hasOwn(scripts, name)) found.set(JSON.stringify([run, name]), { name, where: posix.join(folder, "package.json"), body: scripts[name] });
+			// npm runs a script's pre and post scripts around it; other runners don't by default.
+			const npm = /^npm(\.cmd)?$/.test(posix.basename(run[0] ?? ""));
+			for (const arg of run.slice(1)) {
+				if (!Object.hasOwn(scripts, arg)) continue;
+				for (const name of npm ? [`pre${arg}`, arg, `post${arg}`] : [arg]) {
+					found.set(JSON.stringify([stage, name]), { name, folder, where: posix.join(folder, "package.json"), body: scripts[name] });
+				}
+			}
 		}
 		return found;
 	};
 	const [was, is] = [resolve(before, wasStages), resolve(now, isStages)];
-	const commands = (stages) => new Set(stages.map(({ run }) => JSON.stringify(run)));
-	const [ranBefore, runsNow] = [commands(wasStages), commands(isStages)];
+	const named = (stages) => new Set(stages.map(({ name }) => name));
+	const [hadStage, hasStage] = [named(wasStages), named(isStages)];
+	const removed = ({ name, where, body }) => `script ${name} (${where}): removed (was ${body})`;
+	const added = ({ name, where, body }) => `script ${name} (${where}): added: ${body}`;
 	const lines = new Set();
 	for (const [key, old] of was) {
 		const current = is.get(key);
+		const stage = JSON.parse(key)[0];
 		if (current === undefined) {
-			if (runsNow.has(JSON.stringify(JSON.parse(key)[0]))) lines.add(`script ${old.name} (${old.where}): removed (was ${old.body})`);
+			if (old.body !== undefined && hasStage.has(stage) && scriptsAt(now, old.folder)[old.name] === undefined) lines.add(removed(old));
+		} else if (current.body === undefined) {
+			if (old.body !== undefined) lines.add(removed(old));
+		} else if (old.body === undefined) {
+			lines.add(added(current));
 		} else if (current.where !== old.where || current.body !== old.body) {
 			const where = current.where === old.where ? current.where : `${current.where}, was ${old.where}`;
 			lines.add(`script ${current.name} (${where}): ${current.body}${current.body === old.body ? "" : ` (was ${old.body})`}`);
 		}
 	}
 	for (const [key, current] of is) {
-		if (!was.has(key) && ranBefore.has(JSON.stringify(JSON.parse(key)[0]))) lines.add(`script ${current.name} (${current.where}): added: ${current.body}`);
+		const stage = JSON.parse(key)[0];
+		if (!was.has(key) && current.body !== undefined && hadStage.has(stage) && scriptsAt(before, current.folder)[current.name] === undefined) lines.add(added(current));
 	}
 	return [...lines].sort();
 }
