@@ -20,10 +20,9 @@
 // at the repository root. `expect` is a RegExp, or a string the output must contain. A `test` fault is node:test's, judged
 // as replay judges it: the named test passes clean, and fails with the patch at the assertion with that message.
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { checkoutTree, repoPath } from "./checkout.mjs";
+import { checkoutTree, repoPath, scratchFolder } from "./checkout.mjs";
 import { spawnable } from "./command.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
@@ -42,7 +41,7 @@ export function probe(root, config, names) {
 		if (!lstatSync(resolve(root, path), { throwIfNoEntry: false })) throw new Error(`probes.link: ${path} isn't in the working tree`);
 	}
 	const repo = git(root, "rev-parse", "--show-toplevel");
-	const scratch = mkdtempSync(join(tmpdir(), "marram-probe-copy-"));
+	const scratch = scratchFolder("marram-probe-copy-");
 	const forget = () => rmSync(scratch, { recursive: true, force: true });
 	const signals = ["SIGINT", "SIGTERM"].map((signal) => {
 		const stop = () => {

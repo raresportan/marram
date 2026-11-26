@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { posix, relative, resolve, sep } from "node:path";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, posix, relative, resolve, sep } from "node:path";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
 
@@ -35,4 +37,13 @@ function clone(repo, dir) {
 export function repoPath(root, path = ".") {
 	const prefix = git(root, "rev-parse", "--show-prefix");
 	return posix.normalize(posix.join(prefix, relative(root, resolve(root, path)).split(sep).join("/"))).replace(/(.)\/$/, "$1");
+}
+
+/**
+ * A new, empty folder for disposable checkouts, named `prefix` and some letters, under the temporary folder's real
+ * path. On Windows the temporary folder can come as a short name (C:\Users\RUNNER~1), and a build tool that resolves
+ * some paths to their long name (C:\Users\runneradmin) then finds the checkout outside itself.
+ */
+export function scratchFolder(prefix) {
+	return mkdtempSync(join(realpathSync.native(tmpdir()), prefix));
 }

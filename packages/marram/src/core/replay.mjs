@@ -1,8 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { checkoutAt, repoPath } from "./checkout.mjs";
+import { checkoutAt, repoPath, scratchFolder } from "./checkout.mjs";
 import { spawnable } from "./command.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
@@ -34,7 +33,7 @@ export function replay(root, config, args) {
 	const candidate = git(root, "rev-parse", "HEAD");
 	const base = git(root, "rev-parse", "--verify", "--end-of-options", baseRef + "^{commit}");
 	const check = execFileSync("git", ["show", `${candidate}:${path}`], { cwd: root });
-	const scratch = mkdtempSync(join(tmpdir(), "marram-replay-"));
+	const scratch = scratchFolder("marram-replay-");
 
 	function runCheck(revision, side) {
 		const checkout = join(scratch, side);
