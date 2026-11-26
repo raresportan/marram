@@ -364,12 +364,20 @@ Marram is a separate project, with no code from it.
 - **It has no runtime.** Feature discovery and routing are project-owned. Electron projects can opt into the typed IPC helper. The folder convention is enforced by rules,
   and you wire the features up yourself.
 - **It can't judge.** The commit lint checks that a class and a rung are named, not that they're right.
-- **Hooks can be skipped.** `--no-verify` skips them. There's no server-side enforcement unless your CI runs the gate.
+- **Hooks can be skipped.** `--no-verify` skips them. There's no server-side enforcement unless your CI runs the gate,
+  as Marram's own does (see Developing Marram).
 - **It ships TypeScript sources.** Your build has to bundle what your app imports from it, and scripts run with `tsx`.
 
 ## Developing Marram
 
 `npm run gate` runs the packages' tests and Tally's own gate. A change to a rule comes with a test that fails without it.
+
+CI (`.github/workflows/gate.yml`) runs `npm run gate:full` on every pull request and on main, on Ubuntu under
+`xvfb-run`, and keeps the gate's logs when it fails. For a pull request it also runs `marram guard-diff` against the
+base branch and shows the result in the run's summary and in one comment on the pull request, edited on each push and
+posted only once the branch changes a guard. A pull request from a fork can't be commented on, so it gets the summary
+only. A project using Marram can do the same: run its full gate where its UI checks can open a window, and report
+guard-diff to the reviewer.
 
 ## License
 

@@ -1,0 +1,80 @@
+# The full gate on every pull request and on main, so a green result doesn't depend on the author's machine or on
+# hooks that `--no-verify` skips. For a pull request, also what it changed in the checks that judge it (guard-diff).
+name: Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Full gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      # Ubuntu 24.04 restricts unprivileged user namespaces, which Chromium's sandbox needs: without this Electron
+      # exits before Tally's first journey opens a window.
+      - name: Let Electron's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Full gate
+        # Electron needs a display; xvfb-run gives it one.
+        run: xvfb-run --auto-servernum npm run gate:full
+        env:
+          # A cold runner builds and starts Electron more slowly than a laptop.
+          PROBE_TIMEOUT_MS: "600000"
+      - name: Keep the gate's logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-logs
+          path: |
+            .verify/
+            examples/tally/.verify/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  guard-diff:
+    name: Guard changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base branch's history, for the merge base.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compare the guards with the base branch
+        run: node packages/marram/bin/marram.mjs guard-diff "origin/$BASE" --map examples/tally/docs/feature-map.md | tee guard-diff.txt
+        env:
+          BASE: ${{ github.base_ref }}
+      - name: Show them in the run's summary
+        run: .github/scripts/guard-diff-report.sh summary guard-diff.txt >> "$GITHUB_STEP_SUMMARY"
+      # A pull request from a fork gets a read-only token, so this can't comment there; the summary above still shows it.
+      - name: Show them on the pull request
+        continue-on-error: true
+        run: .github/scripts/guard-diff-report.sh comment guard-diff.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
