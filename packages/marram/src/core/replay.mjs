@@ -23,6 +23,9 @@ export function replay(root, config, args) {
 	if (setup !== undefined && (!Array.isArray(setup) || setup.length === 0 || !setup.every((part) => typeof part === "string" && part !== ""))) {
 		throw new Error('replay.setup in marram.config.mjs must be a command and its arguments, as in ["npm", "ci"]');
 	}
+	// For the setup and for the test, on each side: one that hangs would otherwise hold replay forever.
+	const timeoutMs = config.replay?.timeoutMs ?? 300_000;
+	if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("replay.timeoutMs in marram.config.mjs must be a positive number of milliseconds");
 	const repo = git(root, "rev-parse", "--show-toplevel");
 	const project = relative(repo, root);
 	const path = relative(repo, resolve(root, file));
@@ -42,10 +45,11 @@ export function replay(root, config, args) {
 		rmSync(target, { force: true });
 		writeFileSync(target, check);
 		if (setup) {
-			const result = spawnSync(setup[0], setup.slice(1), { cwd, stdio: ["ignore", 2, 2] });
+			const result = spawnSync(setup[0], setup.slice(1), { cwd, stdio: ["ignore", 2, 2], timeout: timeoutMs });
+			if (result.error?.code === "ETIMEDOUT") return { state: "inconclusive", detail: `Setup didn't finish within ${timeoutMs} ms` };
 			if (result.status !== 0) return { state: "inconclusive", detail: "Setup failed" };
 		}
-		return runNamedTest({ cwd, file: target, name, assertion, output: join(scratch, side + ".jsonl") });
+		return runNamedTest({ cwd, file: target, name, assertion, output: join(scratch, side + ".jsonl"), timeout: timeoutMs });
 	}
 
 	function observe(revision, side) {
