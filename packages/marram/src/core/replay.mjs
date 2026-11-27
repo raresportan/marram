@@ -30,7 +30,8 @@ function parse(args) {
 	const split = args.indexOf("--");
 	if (split === -1) {
 		const [baseRef, file, name, assertion] = args;
-		if (args.length !== 4 || args.some((value) => !value)) throw new Error(USAGE);
+		// --expect without the command it's for: not a test named "--expect".
+		if (args.length !== 4 || args.some((value) => !value) || args.includes("--expect")) throw new Error(USAGE);
 		return { baseRef, file, name, assertion };
 	}
 	const before = args.slice(0, split);
