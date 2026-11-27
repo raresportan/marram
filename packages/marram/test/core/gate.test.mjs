@@ -189,13 +189,13 @@ test("gates starting in the same millisecond get folders of their own, and a fol
 		for (const name of made) assert.match(name, /^gate-fast-2026-11-27T08-00-00-000Z-\d+$/);
 
 		const dead = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
-		const abandoned = `.gate-full-2026-11-27T09-00-00-000Z-${dead}`;
-		const making = `.gate-full-2026-11-27T09-00-00-000Z-${process.pid}`;
-		mkdirSync(join(logs, abandoned));
-		mkdirSync(join(logs, making));
+		// As a gate makes it now (owned.mjs: ownFolder), and as 0.3 made it.
+		const abandoned = [`.gate-full-2026-11-27T09-00-00-000Z-${dead}.staging-${dead}`, `.gate-full-2026-11-27T09-00-00-000Z-${dead}`];
+		const making = [`.gate-full-2026-11-27T09-00-00-000Z-${process.pid}.staging-${process.pid}`, `.gate-full-2026-11-27T09-00-00-000Z-${process.pid}`];
+		for (const name of [...abandoned, ...making]) mkdirSync(join(logs, name));
 		await pruneLogs(logs, 20);
-		assert.ok(!existsSync(join(logs, abandoned)), "a dead gate's half-made folder goes");
-		assert.ok(existsSync(join(logs, making)), "a live gate's folder in the making stays");
+		for (const name of abandoned) assert.ok(!existsSync(join(logs, name)), `a dead gate's half-made folder goes: ${name}`);
+		for (const name of making) assert.ok(existsSync(join(logs, name)), `a live gate's folder in the making stays: ${name}`);
 	} finally {
 		rmSync(logs, { recursive: true, force: true });
 	}

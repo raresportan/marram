@@ -2,10 +2,11 @@
 // awaited (it ended before the check was recorded, so it couldn't fail it), or checking nothing (it would pass
 // whatever the app does). Journeys run the build, not the sources, so a build older than its sources is refused: a
 // source changed since would go untested while its journey passed.
-import { mkdirSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { mapCitations } from "./map-citations.mjs";
 import { matches } from "./pattern.mjs";
+import { writeWhole } from "./owned.mjs";
 
 /** A source file changed since the build that holds it (by path from `root`), if any. A missing output counts as old. */
 export function staleInput(root, builds) {
@@ -80,12 +81,12 @@ export async function runJourneys({ chosen, run, open, evidence, featureMap }) {
 			const observed = result?.checks.filter((check) => check.ok).map((check) => check.label).join(", ");
 			missing.push(`${feature} expected ${citation}. Passed checks: ${observed || "(none)"}`);
 		}
-		writeFileSync(join(evidence, "missing-citations.json"), JSON.stringify(missing, null, 2));
+		writeWhole(join(evidence, "missing-citations.json"), JSON.stringify(missing, null, 2));
 		for (const problem of missing)
 			console.error(`  ✗ ${problem}`);
 	}
 	const failures = results.filter(failed);
-	writeFileSync(join(evidence, "report.json"), JSON.stringify(results, null, 2));
+	writeWhole(join(evidence, "report.json"), JSON.stringify(results, null, 2));
 	console.log(`\n${results.length - failures.length}/${results.length} journeys passed. Evidence: ${evidence}`);
 	return failures.length === 0 && missing.length === 0;
 }

@@ -24,6 +24,14 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
   Before, `gate.progress: /step/g` showed every other matching line, and `lintChecks` read every other check file.
 - **Output**: a ratchet lint's `finish`, and every other way the commands exit, wait for what they wrote. Before, a
   lint's list of problems longer than 64 KB reached a slow reader cut short. `finish` now returns a promise.
+- **Shared places**
+  - The gate's `report.json` and the journeys' `report.json` and `missing-citations.json` are written whole. Before, a
+    reader during a run (an agent, a CI step) could read half a file.
+  - A gate that died holding the state file's lock no longer keeps others waiting, and one still working holds it,
+    however long. Before, the lock was taken from any holder after 10 seconds.
+  - `marram init`'s pre-push hook is executable from the moment it's there. Before, a push in that moment skipped it.
+  - Each Electron session's bootstrap has a name of its own, so journeys running at once with the same `appDir` don't
+    start each other's profile. It's removed when the session is disposed.
 
 ## 0.3.1 — 2026-11-27
 
