@@ -313,7 +313,8 @@ changed in its guards since the merge base:
   `env`;
 - `env` changes, by variable name only, since a value may be a token;
 - `gate.prePush`, and the inherited variables `gate.env` stops or starts counting for reusing a pass;
-- the `package.json` scripts a stage runs, in each workspace its command names with `-w` and, for npm, the `pre` and
+- the `package.json` scripts a stage runs, in each workspace its command names with `-w` (or every workspace the package lists, with
+  `--workspaces`, and the root too with `--include-workspace-root`) and, for npm, the `pre` and
   `post` scripts around them. Each is found in its own revision and matched by the stage that runs it (its tier, name,
   and which of that name it is there), so a workspace renamed under an unchanged command, or a script changed along with
   the stage's arguments, shows what now runs, and stages of the same name in two tiers each have theirs compared;

@@ -270,7 +270,7 @@ function gateIn(top, project, where) {
 
 /**
  * Changes to the package scripts the stages run, found in each revision on its own: a script of the stage's package
- * (its workspace, named by -w or --workspace, or else the project's own) whose name is one of the stage's arguments,
+ * (its workspaces, named by -w or --workspace or all of them by --workspaces, or else the project's own) whose name is one of the stage's arguments,
  * and for npm the pre and post scripts it runs around it. A script is matched across revisions by the stage that runs
  * it, so a stage whose arguments changed still has its script compared. A stage on one side only is the tiers' to
  * report, and so is a stage that starts or stops running a script that's there on both sides.
@@ -284,7 +284,7 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 		}
 	};
 	/**
-	 * Each stage (by its id), workspace it runs in (which of the command's -w it is) and script name, to the package
+	 * Each stage (by its id), workspace it runs in (which of the command's -w it is, or its folder for --workspaces) and script name, to the package
 	 * that holds that script and what the script runs, if anything.
 	 */
 	const resolve = (top, stages) => {
@@ -292,7 +292,7 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 		for (const { id: stage, run } of stages) {
 			// npm runs a script's pre and post scripts around it; other runners don't by default.
 			const npm = /^npm(\.cmd)?$/.test(posix.basename(run[0] ?? ""));
-			workspacesOf(top, project, run).forEach((folder, workspace) => {
+			for (const [workspace, folder] of workspacesOf(top, project, run)) {
 				const scripts = scriptsAt(top, folder);
 				for (const arg of run.slice(1)) {
 					if (!Object.hasOwn(scripts, arg)) continue;
@@ -300,7 +300,7 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 						found.set(JSON.stringify([stage, workspace, name]), { name, folder, where: posix.join(folder, "package.json"), body: scripts[name] });
 					}
 				}
-			});
+			}
 		}
 		return found;
 	};
@@ -332,23 +332,30 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 }
 
 /**
- * The folders (from the repository root) of each workspace `run` names with -w or --workspace, by path or package
- * name, in order; the project's own folder when it names none, or for a name that's no workspace.
+ * `[key, folder]` (from the repository root) for each workspace `run` names with -w or --workspace, by path or package
+ * name, in order, keyed by which of them it is; the project's own folder when it names none, or for a name that's no
+ * workspace. With --workspaces (-ws), every workspace the project's package.json lists, each keyed by its folder (so one
+ * added or removed lines up), and the project too with --include-workspace-root.
  */
 function workspacesOf(top, project, run) {
 	const names = [];
+	const flag = (name) => run.some((arg) => arg === name || arg === `${name}=true`);
 	run.forEach((arg, i) => {
 		if (arg.startsWith("--workspace=")) names.push(arg.slice("--workspace=".length));
 		else if ((arg === "-w" || arg === "--workspace") && run[i + 1]) names.push(run[i + 1]);
 	});
-	if (names.length === 0) return [project];
 	let packages;
+	const packageFiles = () => (packages ??= paths(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ":(glob)**/package.json"));
+	if (flag("--workspaces") || flag("-ws")) {
+		const all = everyWorkspace(top, project, packageFiles());
+		return [...(flag("--include-workspace-root") ? [[project, project]] : []), ...all.map((folder) => [folder, folder])];
+	}
+	if (names.length === 0) return [[0, project]];
 	/** The folder of the workspace `name`: a path from the project, or a package's name. */
 	const folderOf = (name) => {
 		const byPath = posix.normalize(posix.join(project, name));
 		if (existsSync(join(top, byPath, "package.json"))) return byPath;
-		packages ??= paths(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ":(glob)**/package.json");
-		for (const file of packages) {
+		for (const file of packageFiles()) {
 			try {
 				if (JSON.parse(readFileSync(join(top, file), "utf8")).name === name) return posix.dirname(file);
 			} catch {
@@ -357,7 +364,33 @@ function workspacesOf(top, project, run) {
 		}
 		return project;
 	};
-	return names.filter(Boolean).map(folderOf);
+	return names.filter(Boolean).map((name, i) => [i, folderOf(name)]);
+}
+
+/**
+ * The folders (from the repository root) of the workspaces the project's package.json lists (`workspaces`, or Yarn's
+ * `workspaces.packages`): globs from the project, `!` ones excluded, matched against the package.json files in `files`.
+ */
+function everyWorkspace(top, project, files) {
+	let listed;
+	try {
+		listed = JSON.parse(readFileSync(join(top, project, "package.json"), "utf8")).workspaces;
+	} catch {
+		return [];
+	}
+	const globs = (Array.isArray(listed) ? listed : listed?.packages ?? []).filter((glob) => typeof glob === "string");
+	/** A glob from the project as a pattern for a folder from the repository root. */
+	const pattern = (glob) => {
+		const path = posix.normalize(posix.join(project, glob)).replace(/\/$/, "");
+		const source = path.split("/").map((part) => (part === "**" ? ".*" : part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", "[^/]*").replaceAll("?", "[^/]"))).join("/");
+		return new RegExp(`^${source.replaceAll("/.*/", "(?:/.*)?/").replace(/^\.\*\//, "(?:.*/)?")}$`);
+	};
+	const included = globs.filter((glob) => !glob.startsWith("!")).map(pattern);
+	const excluded = globs.filter((glob) => glob.startsWith("!")).map((glob) => pattern(glob.slice(1)));
+	return files
+		.map((file) => posix.dirname(file))
+		.filter((folder) => folder !== project && included.some((match) => match.test(folder)) && !excluded.some((match) => match.test(folder)))
+		.sort();
 }
 
 /** A command as a shell would take it: each argument whole, quoted when it holds anything but plain characters. */
