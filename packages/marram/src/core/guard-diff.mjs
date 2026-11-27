@@ -188,7 +188,8 @@ function compareProject(before, now, project) {
 		lines.push(`probes ${setting} now ${value(current)} (was ${value(old)})`);
 	}
 	lines.push(...probeChanges(before, now, project, was.faults, is.faults));
-	const all = (gate) => TIERS.flatMap((tier) => gate.tiers[tier]);
+	// Each stage known by its tier, name and which of that name it is there: tiers may reuse a stage's name.
+	const all = (gate) => TIERS.flatMap((tier) => [...occurrences(gate.tiers[tier])].map(([key, stage]) => ({ ...stage, id: `${tier} ${key}` })));
 	lines.push(...scriptChanges(before, now, project, all(was), all(is)));
 	return lines;
 }
@@ -282,25 +283,29 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 			return {};
 		}
 	};
-	/** Each stage name and script name, to the package that holds that script and what the script runs, if anything. */
+	/**
+	 * Each stage (by its id), workspace it runs in (which of the command's -w it is) and script name, to the package
+	 * that holds that script and what the script runs, if anything.
+	 */
 	const resolve = (top, stages) => {
 		const found = new Map();
-		for (const { name: stage, run } of stages) {
-			const folder = workspaceOf(top, project, run) ?? project;
-			const scripts = scriptsAt(top, folder);
+		for (const { id: stage, run } of stages) {
 			// npm runs a script's pre and post scripts around it; other runners don't by default.
 			const npm = /^npm(\.cmd)?$/.test(posix.basename(run[0] ?? ""));
-			for (const arg of run.slice(1)) {
-				if (!Object.hasOwn(scripts, arg)) continue;
-				for (const name of npm ? [`pre${arg}`, arg, `post${arg}`] : [arg]) {
-					found.set(JSON.stringify([stage, name]), { name, folder, where: posix.join(folder, "package.json"), body: scripts[name] });
+			workspacesOf(top, project, run).forEach((folder, workspace) => {
+				const scripts = scriptsAt(top, folder);
+				for (const arg of run.slice(1)) {
+					if (!Object.hasOwn(scripts, arg)) continue;
+					for (const name of npm ? [`pre${arg}`, arg, `post${arg}`] : [arg]) {
+						found.set(JSON.stringify([stage, workspace, name]), { name, folder, where: posix.join(folder, "package.json"), body: scripts[name] });
+					}
 				}
-			}
+			});
 		}
 		return found;
 	};
 	const [was, is] = [resolve(before, wasStages), resolve(now, isStages)];
-	const named = (stages) => new Set(stages.map(({ name }) => name));
+	const named = (stages) => new Set(stages.map(({ id }) => id));
 	const [hadStage, hasStage] = [named(wasStages), named(isStages)];
 	const removed = ({ name, where, body }) => `script ${name} (${where}): removed (was ${body})`;
 	const added = ({ name, where, body }) => `script ${name} (${where}): added: ${body}`;
@@ -326,22 +331,33 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 	return [...lines].sort();
 }
 
-/** The folder (from the repository root) of the workspace `run` names with -w or --workspace, by path or package name. */
-function workspaceOf(top, project, run) {
-	const at = run.findIndex((arg) => arg === "-w" || arg === "--workspace" || arg.startsWith("--workspace="));
-	if (at === -1) return undefined;
-	const name = run[at].startsWith("--workspace=") ? run[at].slice("--workspace=".length) : run[at + 1];
-	if (!name) return undefined;
-	const byPath = posix.normalize(posix.join(project, name));
-	if (existsSync(join(top, byPath, "package.json"))) return byPath;
-	for (const file of paths(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ":(glob)**/package.json")) {
-		try {
-			if (JSON.parse(readFileSync(join(top, file), "utf8")).name === name) return posix.dirname(file);
-		} catch {
-			// A package.json that isn't JSON names no workspace.
+/**
+ * The folders (from the repository root) of each workspace `run` names with -w or --workspace, by path or package
+ * name, in order; the project's own folder when it names none, or for a name that's no workspace.
+ */
+function workspacesOf(top, project, run) {
+	const names = [];
+	run.forEach((arg, i) => {
+		if (arg.startsWith("--workspace=")) names.push(arg.slice("--workspace=".length));
+		else if ((arg === "-w" || arg === "--workspace") && run[i + 1]) names.push(run[i + 1]);
+	});
+	if (names.length === 0) return [project];
+	let packages;
+	/** The folder of the workspace `name`: a path from the project, or a package's name. */
+	const folderOf = (name) => {
+		const byPath = posix.normalize(posix.join(project, name));
+		if (existsSync(join(top, byPath, "package.json"))) return byPath;
+		packages ??= paths(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ":(glob)**/package.json");
+		for (const file of packages) {
+			try {
+				if (JSON.parse(readFileSync(join(top, file), "utf8")).name === name) return posix.dirname(file);
+			} catch {
+				// A package.json that isn't JSON names no workspace.
+			}
 		}
-	}
-	return undefined;
+		return project;
+	};
+	return names.filter(Boolean).map(folderOf);
 }
 
 /** A command as a shell would take it: each argument whole, quoted when it holds anything but plain characters. */

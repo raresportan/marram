@@ -278,6 +278,30 @@ test("hooks are compared where a fresh checkout has none configured (--hooks), a
 	}
 });
 
+test("a script is compared for each stage that runs it, though tiers reuse the stage's name, and in each workspace a command names", () => {
+	const repo = repository();
+	try {
+		// "unit" in the default tier runs app's check, and "unit" in the full tier other's; "lint" runs in both. The app
+		// project's own config runs neither script, so only the root project's stages report them.
+		const tiers = {
+			fast: [],
+			default: [{ name: "unit", run: ["npm", "run", "check", "-w", "app"] }, { name: "lint", run: ["npm", "run", "lint", "-w", "app", "-w", "other"] }],
+			full: [{ name: "unit", run: ["npm", "run", "check", "-w", "other"] }],
+		};
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers }));
+		repo.write("packages/app/package.json", JSON.stringify({ name: "app", scripts: { ...repo.appScripts, check: "node check.mjs" } }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { check: "node check.mjs", lint: "eslint ." } }));
+		repo.commit();
+		repo.write("packages/app/package.json", JSON.stringify({ name: "app", scripts: { ...repo.appScripts, check: "true" } }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { check: "node check.mjs", lint: "true" } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}script check \(packages\/app\/package\.json\): true \(was node check\.mjs\)$/m, result.stdout);
+		assert.match(result.stdout, /^ {2}script lint \(packages\/other\/package\.json\): true \(was eslint \.\)$/m, result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a stage's workspace is found in each revision, so swapped package names show the script that now runs", () => {
 	const repo = repository();
 	try {
