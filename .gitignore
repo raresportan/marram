@@ -17,3 +17,5 @@ id_ed25519
 # The package's TypeScript, compiled in place for Node and other tools (npm run build -w @raresportan/marram).
 packages/marram/src/**/*.js
 packages/marram/src/**/*.d.ts
+# Where each build compiles before its files replace those in src; left only by a build that crashed.
+packages/marram/.build/
