@@ -5,9 +5,10 @@
 // So the command runs under a supervisor (this file, run as a script), in a process group of its own. At the timeout
 // the supervisor sends the group SIGTERM, so the command can stop what it started, and after GRACE_MS SIGKILL; on
 // Windows, taskkill ends the command's whole tree. An interruption (Ctrl-C, a hook's timeout) is passed on to the
-// group, which no longer gets the terminal's own. A command that exits leaving processes in its group (holding its
-// output) is done when they are, and the timeout covers them too. The supervisor says how the command ended on file
-// descriptor 3.
+// group, which no longer gets the terminal's own. The command's output comes through the supervisor, so a command is
+// done when it has exited and everything holding its output has let go, and the timeout covers all of that: whatever
+// still holds it at the deadline, even out of reach in a group of its own, doesn't hold the caller. The supervisor says
+// how the command ended on file descriptor 3.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 
@@ -49,7 +50,12 @@ export function runBounded(file, args, { timeout, capture = false, ...options })
 /** The supervisor: runs the command `spec` names, stops it at its timeout, and reports how it ended. */
 function supervise({ file, args, timeout, options }) {
 	const report = (value) => writeSync(3, JSON.stringify(value));
-	const child = spawn(file, args, { ...options, stdio: ["ignore", "inherit", "inherit"], detached: !WINDOWS });
+	// The command's output comes through here rather than straight to the caller: then the supervisor knows when the last
+	// process holding it lets it go (the command, or anything it started, in its group or not), and at the deadline it can
+	// let the caller go, whoever still holds it.
+	const child = spawn(file, args, { ...options, stdio: ["ignore", "pipe", "pipe"], detached: !WINDOWS });
+	child.stdout?.on("data", (chunk) => process.stdout.write(chunk));
+	child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
 	/** Send `signal` to the command and everything it started. */
 	const stop = (signal) => {
 		if (child.pid === undefined) return;
@@ -62,27 +68,9 @@ function supervise({ file, args, timeout, options }) {
 			}
 		}
 	};
-	let timedOut = false;
-	let interrupted = false;
-	const timer = setTimeout(() => {
-		timedOut = true;
-		stop("SIGTERM");
-		setTimeout(() => stop("SIGKILL"), GRACE_MS).unref();
-	}, timeout);
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-		process.on(signal, () => {
-			interrupted = true;
-			stop(signal);
-			setTimeout(() => stop("SIGKILL"), GRACE_MS).unref();
-		});
-	}
-	child.on("error", (error) => {
-		clearTimeout(timer);
-		report({ error: { code: error.code, message: error.message } });
-		process.exit(0);
-	});
-	/** Whether anything is left in the command's process group. */
+	/** Whether anything is left in the command's process group, which it can be signalled through. */
 	const groupAlive = () => {
+		if (WINDOWS) return false;
 		try {
 			process.kill(-child.pid, 0);
 			return true;
@@ -90,24 +78,51 @@ function supervise({ file, args, timeout, options }) {
 			return error.code === "EPERM";
 		}
 	};
-	child.on("exit", (status, signal) => {
-		const finish = () => {
-			clearTimeout(timer);
-			report({ status, signal, timedOut });
-			process.exit(0);
-		};
-		// What the command started and left running, after a timeout or an interruption, would keep its output open and
-		// the caller waiting.
-		if (timedOut || interrupted) stop("SIGKILL");
-		if (WINDOWS || timedOut || interrupted || !groupAlive()) return finish();
-		// The command exited, but what it started is still in its group, holding the output the caller waits on: the
-		// deadline still stands, and the command is done when they are (or stopped with them when it passes).
+	let timedOut = false;
+	let interrupted = false;
+	let ended;
+	let finished = false;
+	const finish = () => {
+		if (finished) return;
+		finished = true;
+		clearTimeout(timer);
+		report({ status: ended?.status ?? null, signal: ended?.signal ?? null, timedOut });
+		// What it forwarded is written before the supervisor goes: to a pipe, a write can finish later.
+		process.stdout.write("", () => process.stderr.write("", () => process.exit(0)));
+	};
+	/** Stop the command and what it started; once it's gone and nothing it can reach is left, let go of its output. */
+	const halt = (signal) => {
+		stop(signal);
+		setTimeout(() => stop("SIGKILL"), GRACE_MS);
 		const poll = setInterval(() => {
-			if (groupAlive()) return;
+			if (ended === undefined || groupAlive()) return;
 			clearInterval(poll);
+			// Whatever still holds the output is out of reach (a group of its own): the caller doesn't wait for it.
+			child.stdout?.destroy();
+			child.stderr?.destroy();
 			finish();
 		}, 50);
+	};
+	const timer = setTimeout(() => {
+		timedOut = true;
+		halt("SIGTERM");
+	}, timeout);
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+		process.on(signal, () => {
+			interrupted = true;
+			halt(signal);
+		});
+	}
+	child.on("error", (error) => {
+		clearTimeout(timer);
+		report({ error: { code: error.code, message: error.message } });
+		process.exit(0);
 	});
+	child.on("exit", (status, signal) => {
+		ended = { status, signal };
+	});
+	// Exited, and its output let go by everything that held it: done.
+	child.on("close", finish);
 }
 
 if (process.argv[1] === import.meta.filename && process.argv[2] === "--supervise") supervise(JSON.parse(readFileSync(0, "utf8")));

@@ -78,3 +78,12 @@ test("a command that exits leaving a process that holds its output still has its
 	assert.equal(runBounded(process.execPath, ["-e", "process.exit(0)"], { timeout: 10_000 }).status, 0);
 	assert.ok(Date.now() - quick < 3_000);
 });
+
+test("a process the command starts in a group of its own, holding its output, doesn't hold the caller past the timeout", () => {
+	// Detached, so it's in no group the supervisor can signal; it keeps stdout open for two seconds.
+	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], { stdio: "inherit", detached: true }).unref();';
+	const started = Date.now();
+	const result = runBounded(process.execPath, ["-e", wrapper], { timeout: 500, capture: true });
+	assert.equal(result.error?.code, "ETIMEDOUT", JSON.stringify(result));
+	assert.ok(Date.now() - started < 1_800, `took ${Date.now() - started} ms`);
+});
