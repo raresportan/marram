@@ -37,15 +37,28 @@ export function findRoot(from = process.cwd()) {
 
 /**
  * The config at `root`, unchecked, evaluated from `root` whatever folder the command was run in: a config may build its
- * stages from process.cwd(), and the gate a hook starts runs from the root, so both must see the same.
+ * stages from process.cwd(), and the gate a hook starts runs from the root, so both must see the same. Its `gate` is
+ * read once, there, into plain values: a getter gives the gate one set of stages, which it both runs and records a
+ * verdict for, rather than one to run and another when the verdict is recorded.
  */
 export async function importConfig(root) {
 	const from = process.cwd();
 	process.chdir(root);
 	try {
-		return (await import(pathToFileURL(join(root, FILE)).href)).default;
+		const config = (await import(pathToFileURL(join(root, FILE)).href)).default;
+		if (!isObject(config) || config.gate === undefined) return config;
+		return { ...config, gate: snapshot(config.gate) };
 	} finally {
 		process.chdir(from);
+	}
+}
+
+/** `value` read once into plain data: getters run now. A RegExp stays one; a value that can't be copied (a function) is left as is. */
+function snapshot(value) {
+	try {
+		return structuredClone(value);
+	} catch {
+		return value;
 	}
 }
 

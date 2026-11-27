@@ -1,8 +1,8 @@
 // What the gate said about each state of the working tree, so a hook doesn't run it again for code it has judged.
 // Kept in the repository's git folder (shared by its worktrees): marram-gate.json.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -107,21 +107,54 @@ export const stageText = ({ run, env = {} }) => JSON.stringify([run, Object.entr
 // holds keys, and with the secret beside them a reader could check guesses at a stage's low-entropy values.
 const keyPath = (cwd) => join(resolve(cwd, git(cwd, ["rev-parse", "--git-common-dir"])), "marram-gate.key");
 
-/** The secret for stage keys, or undefined when there's none yet; `create` makes it then. */
+const SECRET = /^[0-9a-f]{64}$/;
+
+/** The secret at `path` if it's a whole one, or undefined. */
+function readSecret(path) {
+	try {
+		const text = readFileSync(path, "utf8");
+		return SECRET.test(text) ? text : undefined;
+	} catch (error) {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+/**
+ * Leave `file` readable by its owner only. On Windows a file's mode doesn't do that, so its inherited permissions are
+ * removed and its owner given full control (icacls); where that fails, the file keeps what its folder gives.
+ */
+function ownerOnly(file) {
+	if (process.platform !== "win32") return;
+	const user = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
+	if (user) spawnSync("icacls", [file, "/inheritance:r", "/grant:r", `${user}:F`], { stdio: "ignore" });
+}
+
+/**
+ * The secret for stage keys, or undefined when there's none yet; `create` makes it then. It's written whole to a file
+ * of its own, made owner-only, and only then published under its name with a hard link, which fails if a secret is
+ * already there: a gate starting at the same moment reads a whole secret or none, and both end up with the same one.
+ * One that isn't whole (written some other way, or cut short) counts as none, and `create` replaces it.
+ */
 function secretOf(cwd, create) {
 	const path = keyPath(cwd);
+	const found = readSecret(path);
+	if (found !== undefined || !create) return found;
+	const staged = `${path}.${process.pid}.tmp`;
 	try {
-		return readFileSync(path, "utf8");
-	} catch (error) {
-		if (error.code !== "ENOENT" || !create) return undefined;
+		writeFileSync(staged, randomBytes(32).toString("hex"), { mode: 0o600 });
+		ownerOnly(staged);
+		try {
+			linkSync(staged, path);
+		} catch {
+			// Another gate published one first (keep theirs), or what's there isn't whole, or the file system has no hard
+			// links: then a rename puts this one there.
+			if (readSecret(path) === undefined) renameSync(staged, path);
+		}
+	} finally {
+		rmSync(staged, { force: true });
 	}
-	try {
-		// Created only if it isn't there, so two gates at once can't make two secrets.
-		writeFileSync(path, randomBytes(32).toString("hex"), { flag: "wx", mode: 0o600 });
-	} catch (error) {
-		if (error.code !== "EEXIST") throw error;
-	}
-	return readFileSync(path, "utf8");
+	return readSecret(path);
 }
 
 /**

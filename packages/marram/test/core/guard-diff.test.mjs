@@ -215,6 +215,20 @@ test("a project whose path git would quote is compared, and an untracked hook is
 	}
 });
 
+test("guard-diff reports the inherited variables gate.env stops or starts counting", () => {
+	const repo = repository();
+	try {
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, env: ["CI", "NODE_ENV"] }));
+		repo.commit();
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, env: ["NODE_ENV", "TZ"] }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}env: no longer counts CI for reusing a pass$/m);
+		assert.match(result.stdout, /^ {2}env: now counts TZ for reusing a pass$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("hooks are compared where a fresh checkout has none configured (--hooks), and where core.hooksPath is absolute", () => {
 	const repo = repository();
 	const git = (...args) => execFileSync("git", args, { cwd: repo.root, encoding: "utf8" }).trim();

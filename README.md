@@ -131,7 +131,9 @@ Gates run on the same code with different stages keep a verdict each. The config
 wherever a command runs.
 
 A verdict keeps a key for the stages it ran, not their commands or environment, which may hold secrets. The key is an
-HMAC under a secret kept in its own owner-only file, `marram-gate.key` in the git folder.
+HMAC under a secret kept in its own owner-only file, `marram-gate.key` in the git folder. On Windows, where a file's mode
+doesn't limit who reads it, its inherited permissions are removed with `icacls`. The gate reads its configuration once,
+from the project's root, and records its verdict for the stages it ran.
 
 ```sh
 # .githooks/commit-msg
@@ -306,7 +308,7 @@ changed in its guards since the merge base:
   added, reordered, or running different arguments, and where a removed stage still runs with the same arguments and
   `env`;
 - `env` changes, by variable name only, since a value may be a token;
-- `gate.prePush`;
+- `gate.prePush`, and the inherited variables `gate.env` stops or starts counting for reusing a pass;
 - the `package.json` scripts a stage runs, including through `-w` and, for npm, the `pre` and `post` scripts around
   them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
   unchanged command, or a script changed along with the stage's arguments, shows what now runs;
