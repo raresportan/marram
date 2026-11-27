@@ -348,8 +348,9 @@ Skipped tests, setup errors, other failures, and checks that pass on both revisi
 If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
 Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.
 The setup and the test each get five minutes on each side; set `replay: { timeoutMs }` to change that. One that runs
-longer is stopped and that side is inconclusive. It's sent SIGTERM, so a setup script should pass that on to what it
-starts, as npm does.
+longer is stopped and that side is inconclusive. It and everything it started get SIGTERM, then SIGKILL five seconds
+later if they're still running, so one that ignores SIGTERM can't hang replay. On Windows its whole tree is ended at
+once. A probe's check is stopped the same way at `probes.timeoutMs`.
 
 ### Typed Electron IPC
 

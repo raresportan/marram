@@ -1,7 +1,8 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { checkoutAt, repoPath, scratchFolder } from "./checkout.mjs";
+import { runBounded } from "./bounded.mjs";
 import { spawnable } from "./command.mjs";
 import { replayProblems } from "./config.mjs";
 import { runNamedTest } from "./node-test.mjs";
@@ -45,7 +46,7 @@ export function replay(root, config, args) {
 		writeFileSync(target, check);
 		if (setup) {
 			const run = spawnable(setup[0], setup.slice(1), { cwd });
-			const result = spawnSync(run.file, run.args, { ...run.options, cwd, stdio: ["ignore", 2, 2], timeout: timeoutMs });
+			const result = runBounded(run.file, run.args, { ...run.options, cwd, timeout: timeoutMs });
 			if (result.error?.code === "ETIMEDOUT") return { state: "inconclusive", detail: `Setup didn't finish within ${timeoutMs} ms` };
 			if (result.status !== 0) return { state: "inconclusive", detail: "Setup failed" };
 		}
