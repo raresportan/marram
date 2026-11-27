@@ -53,16 +53,18 @@ export function locate(command, { cwd = process.cwd(), platform = process.platfo
 }
 
 /**
- * The file Windows would run for `command`, as a whole path: on PATH, or given as a path from `cwd`, with each of
- * PATHEXT's extensions tried.
+ * The file Windows would run for `command`, as a whole path: on PATH (a relative folder there from `cwd`, where the
+ * command runs), or given as a path from `cwd`, with each of PATHEXT's extensions tried, and .BAT and .CMD where it
+ * leaves them out: run through cmd.exe by their whole path, they need no PATHEXT, and Node can't run them without it.
  */
 function onPath(command, cwd, env, exists) {
-	const extensions = (variable(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+	const listed = (variable(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+	const extensions = [...listed, ...[".BAT", ".CMD"].filter((extension) => !listed.some((other) => other.toLowerCase() === extension.toLowerCase()))];
 	const named = extensions.some((extension) => command.toLowerCase().endsWith(extension.toLowerCase())) ? [command] : [];
 	const candidates = (base) => [...named.map(() => base), ...extensions.map((extension) => base + extension)];
 	const folders = /[\\/]/.test(command) || win32.isAbsolute(command) ? [cwd] : (variable(env, "PATH") ?? "").split(";").filter(Boolean);
 	for (const folder of folders) {
-		for (const candidate of candidates(win32.resolve(folder, command))) if (exists(candidate)) return candidate;
+		for (const candidate of candidates(win32.resolve(cwd, folder, command))) if (exists(candidate)) return candidate;
 	}
 	return undefined;
 }

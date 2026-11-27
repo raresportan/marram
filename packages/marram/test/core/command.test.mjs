@@ -54,3 +54,15 @@ test("a command is found on PATH, or as a path from the folder it runs in, or no
 	assert.equal(locate("npm", windows(["C:\\Program Files\\nodejs\\npm.cmd"])).toLowerCase(), "c:\\program files\\nodejs\\npm.cmd");
 	assert.equal(locate("missing", windows([])), undefined);
 });
+
+test("on Windows, a .cmd or .bat is found even where PATHEXT leaves it out, as Node can't run one without cmd.exe", () => {
+	const narrow = { PATHEXT: ".COM;.EXE" };
+	assert.equal(spawnable("npm", [], windows(["C:\\Program Files\\nodejs\\npm.cmd"], narrow)).args[3].toLowerCase(), '"c:\\program^ files\\nodejs\\npm.cmd"');
+	assert.equal(spawnable("build.bat", [], windows(["C:\\tools\\build.bat"], narrow)).file, "C:\\Windows\\system32\\cmd.exe");
+	assert.equal(locate("npm", windows(["C:\\Program Files\\nodejs\\npm.cmd"], narrow)), "C:\\Program Files\\nodejs\\npm.cmd".replace(/cmd$/, "CMD"));
+});
+
+test("on Windows, a relative folder on PATH is found from the folder the command runs in", () => {
+	const project = { ...windows(["C:\\repo\\app\\node_modules\\.bin\\tsx.cmd"], { Path: "node_modules\\.bin;C:\\tools" }), cwd: "C:\\repo\\app" };
+	assert.equal(spawnable("tsx", [], project).args[3].toLowerCase(), '"c:\\repo\\app\\node_modules\\.bin\\tsx.cmd"');
+});
