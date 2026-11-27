@@ -122,12 +122,13 @@ export function probesProblems(probes) {
 		found.push(...unknownKeys(fault, `probes.faults[${i}]`, ["name", "patch", "run", "expect", "test", "cwd"]));
 		if (!isText(fault.name)) found.push(`${label} needs a name`);
 		if (!isText(fault.patch)) found.push(`${label} needs a patch`);
-		const byCommand = isCommand(fault.run) && (fault.expect instanceof RegExp || isText(fault.expect));
-		const byTest = ["file", "name", "assertion"].every((key) => isText(fault.test?.[key]));
-		if (byCommand === byTest) found.push(`${label} needs either run and expect, or test: { file, name, assertion }`);
+		// One way or the other, with nothing of the other way: probe takes the test whenever there is one.
+		const byCommand = isCommand(fault.run) && (fault.expect instanceof RegExp || isText(fault.expect)) && fault.test === undefined;
+		const byTest = ["file", "name", "assertion"].every((key) => isText(fault.test?.[key])) && fault.run === undefined && fault.expect === undefined;
+		if (!byCommand && !byTest) found.push(`${label} needs either run and expect, or test: { file, name, assertion }`);
 		if (isObject(fault.test)) found.push(...unknownKeys(fault.test, `probes.faults[${i}].test`, ["file", "name", "assertion"]));
 		if (fault.cwd !== undefined && !isText(fault.cwd)) found.push(`${label}: cwd must be a path in the project`);
-		if (faults.findIndex((other) => other?.name === fault.name) !== i) found.push(`${label}: another fault has that name`);
+		if (isText(fault.name) && faults.findIndex((other) => other?.name === fault.name) !== i) found.push(`${label}: another fault has that name`);
 	});
 	return found;
 }

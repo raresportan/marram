@@ -70,6 +70,20 @@ test("probes are checked as probe checks them, and a fault's keys too", () => {
 	]);
 });
 
+test("a fault is checked one way, with nothing of the other way, and faults without names aren't taken for each other", () => {
+	const either = (i) => `probes.faults[${i}] ("f${i}") needs either run and expect, or test: { file, name, assertion }`;
+	const named = { file: "a.test.mjs", name: "t", assertion: "a" };
+	assert.deepEqual(problems({ probes: { faults: [
+		{ name: "f0", patch: "p.patch", run: ["npm", "test"], expect: /x/, test: {} },
+		{ name: "f1", patch: "p.patch", test: named, run: ["npm", "test"] },
+		{ name: "f2", patch: "p.patch", test: named, expect: "x" },
+	] } }), [either(0), either(1), either(2)]);
+	assert.deepEqual(problems({ probes: { faults: [{ patch: "p.patch", test: named }, { patch: "p.patch", test: named }] } }), [
+		"probes.faults[0] needs a name",
+		"probes.faults[1] needs a name",
+	]);
+});
+
 test("every command refuses a config with problems, and lists them all before it does anything", () => {
 	const root = mkdtempSync(join(tmpdir(), "marram-config-"));
 	try {

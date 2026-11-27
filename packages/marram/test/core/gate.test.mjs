@@ -14,7 +14,7 @@ const GAP_MS = 2500;
 
 // Each run takes its turn from the plan: `pause` stops the gate past the gap and wakes it again, standing in for sleep.
 const STAGE = `
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const runs = existsSync("runs") ? readFileSync("runs", "utf8").length : 0;
 appendFileSync("runs", ".");
