@@ -3,7 +3,7 @@
 // shell. They run through cmd.exe instead, with the command and each argument quoted and escaped for it, as the
 // cross-spawn package does. Elsewhere, and for a Windows program (.exe, .com), the command runs as given.
 import { existsSync } from "node:fs";
-import { win32 } from "node:path";
+import { posix, win32 } from "node:path";
 
 // The characters cmd.exe treats specially, escaped with ^ so it passes them on.
 const META = /([()\][%!^"`<>&|;, *?])/g;
@@ -36,6 +36,20 @@ function quoted(arg, twice) {
 function variable(env, name) {
 	const key = Object.keys(env).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
 	return key === undefined ? undefined : env[key];
+}
+
+/**
+ * The file this platform would run for `command`, from `cwd` (on PATH, or given as a path from `cwd`), or undefined when
+ * there's none. `platform`, `env` and `exists` are this process's unless given.
+ */
+export function locate(command, { cwd = process.cwd(), platform = process.platform, env = process.env, exists = existsSync } = {}) {
+	if (platform === "win32") return onPath(command, cwd, env, exists);
+	if (command.includes("/")) return exists(posix.resolve(cwd, command)) ? posix.resolve(cwd, command) : undefined;
+	for (const folder of (env.PATH ?? "").split(":").filter(Boolean)) {
+		const candidate = posix.resolve(cwd, folder, command);
+		if (exists(candidate)) return candidate;
+	}
+	return undefined;
 }
 
 /**

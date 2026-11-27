@@ -26,19 +26,23 @@ import { pathToFileURL } from "node:url";
 
 const FILE = "marram.config.mjs";
 
+/** The project root: the nearest folder from `from` up that has a marram.config.mjs, or undefined when none does. */
+export function findRoot(from = process.cwd()) {
+	for (let dir = resolve(from); ; dir = dirname(dir)) {
+		if (existsSync(join(dir, FILE))) return dir;
+		if (dirname(dir) === dir) return undefined;
+	}
+}
+
 /** The project root, the nearest folder from `from` up that has a marram.config.mjs, and its config, checked. */
 export async function load(from = process.cwd()) {
-	for (let dir = resolve(from); ; dir = dirname(dir)) {
-		const file = join(dir, FILE);
-		if (!existsSync(file)) {
-			if (dirname(dir) === dir) throw new Error(`No ${FILE} in ${resolve(from)} or above it.`);
-			continue;
-		}
-		const config = (await import(pathToFileURL(file).href)).default;
-		const found = problems(config);
-		if (found.length > 0) throw new Error(`${file} isn't what Marram reads:\n${found.map((problem) => `  ${problem}`).join("\n")}`);
-		return { root: dir, config };
-	}
+	const root = findRoot(from);
+	if (root === undefined) throw new Error(`No ${FILE} in ${resolve(from)} or above it.`);
+	const file = join(root, FILE);
+	const config = (await import(pathToFileURL(file).href)).default;
+	const found = problems(config);
+	if (found.length > 0) throw new Error(`${file} isn't what Marram reads:\n${found.map((problem) => `  ${problem}`).join("\n")}`);
+	return { root, config };
 }
 
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof RegExp);
