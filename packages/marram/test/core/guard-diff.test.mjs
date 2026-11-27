@@ -555,6 +555,21 @@ test("a test run alone in a test file the branch adds is reported, as it stops t
 	}
 });
 
+test("a file renamed to a test file's name, with a test run alone, is reported as a new test file", () => {
+	const repo = repository();
+	try {
+		const focused = 'it.only("just this", () => assert.ok(1));\nit("and this", () => assert.ok(2));\n';
+		repo.write("packages/app/src/candidate.mjs", focused);
+		repo.commit();
+		rmSync(join(repo.root, "packages/app/src/candidate.mjs"));
+		repo.write("packages/app/src/candidate.test.mjs", focused);
+		const result = repo.diff();
+		assert.equal(result.stdout.split("\nTests\n")[1]?.split("\n\n")[0], "  now only: packages/app/src/candidate.test.mjs › just this (newly named as a test file)", result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("guard-diff reports a test now run alone, and not a test helper moved or removed", () => {
 	const repo = repository();
 	try {

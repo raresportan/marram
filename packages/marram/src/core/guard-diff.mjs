@@ -131,7 +131,11 @@ function testChanges(repo, ancestor, before) {
 			if (isTestFile(to)) for (const found of testsIn(to, read(repo, to)) ?? []) if (found.only) lines.push(`now only: ${to} › ${found.name} (in a new file)`);
 			continue;
 		}
-		if (!isTestFile(from)) continue;
+		// Renamed into a test file's name: new to the runner, so as for a new file, a test it runs alone stops the others.
+		if (!isTestFile(from)) {
+			if (isTestFile(to)) for (const found of testsIn(to, read(repo, to)) ?? []) if (found.only) lines.push(`now only: ${to} › ${found.name} (newly named as a test file)`);
+			continue;
+		}
 		const was = testsIn(from, read(before, from));
 		// A helper beside the tests (test/helpers.mjs, tests/conftest.py) declares none: moving or removing it is no change.
 		if (status === "D") {
