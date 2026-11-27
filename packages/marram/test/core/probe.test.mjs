@@ -102,6 +102,24 @@ test("the reset between the runs keeps the empty folders setup made", () => {
 	}
 });
 
+test("a fault is caught only if its check passes again without it: one that fails on what the runs leave in a linked folder is inconclusive", () => {
+	// Fails once a linked cache holds its earlier run's mark, as a cache in a linked node_modules can, and never reads
+	// value.cjs: the reset puts the copy back, but not the working tree's folder the copy links to.
+	const cache = 'const fs = require("node:fs"); if (fs.existsSync("shared/ran")) { console.log("stored value"); process.exit(1); } fs.writeFileSync("shared/ran", "");\n';
+	const cached = '{ name: "a cached run", patch: "probes/zero.patch", run: ["node", "cache.cjs"], expect: /stored value/ }';
+	const repo = project(`${cached}, ${BY_COMMAND}`, 'link: ["shared"],');
+	try {
+		repo.write("cache.cjs", cache);
+		mkdirSync(join(repo.root, "shared"));
+		const result = repo.probe();
+		assert.equal(result.status, 1, result.stdout + result.stderr);
+		assert.match(result.stdout, /^\? a cached run: inconclusive: caught, but the check fails again without the fault, so the fault may not be why: /m);
+		assert.match(result.stdout, /^✓ a stored zero: caught/m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a check weakened in the working tree misses the fault, and says so", () => {
 	const repo = project(`${BY_COMMAND}, ${BY_TEST}`);
 	try {

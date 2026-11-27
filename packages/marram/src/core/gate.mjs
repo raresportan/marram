@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { COVERS_DEFAULT, projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
+import { matches } from "./pattern.mjs";
 import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
@@ -140,12 +141,12 @@ export async function gate(root, config, given) {
 	const [tier = "default"] = args;
 	if (!TIERS.includes(tier)) {
 		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full] [--json]`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	const { logs = ".verify", keep = 20, progress, tiers, sleepGapMs = 30_000 } = config.gate ?? {};
 	if (!Array.isArray(tiers?.[tier])) {
 		console.error(`marram.config.mjs has no gate.tiers.${tier}: a list of stages.`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	const dir = await startRun(join(root, logs), tier);
 	await pruneLogs(join(root, logs), keep);
@@ -180,7 +181,7 @@ export async function gate(root, config, given) {
 		child.stderr.pipe(log, { end: false });
 		// Progress lines (a check's ✓ or ✗, and what the project's `progress` matches); everything else stays in the log.
 		child.stdout.on("data", (chunk) => {
-			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) say(`  ${name}: ${line.trim()}`);
+			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || (progress !== undefined && matches(progress, line))) say(`  ${name}: ${line.trim()}`);
 		});
 		let last = Date.now();
 		let slept = 0;

@@ -10,6 +10,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
+import { exitWhenWritten } from "./json-output.mjs";
+import { matches } from "./pattern.mjs";
 
 /**
  * Problems with `found` sites (`{ key, at, what }`: the entry that would allow it, where it is, what it does) against
@@ -38,16 +40,20 @@ export function ratchet({ list, allowed, found, fix, stale }) {
 	return problems;
 }
 
-/** The TypeScript files under `folder`, declaration files aside. */
-export function sourceFiles(folder) {
+const TYPESCRIPT = /^(?!.*\.d\.ts$).*\.tsx?$/;
+
+/** The files under `folder` whose names `match` matches: TypeScript's, declaration files aside, unless it's given. */
+export function sourceFiles(folder, match = TYPESCRIPT) {
 	return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
 		const path = join(folder, entry.name);
-		if (entry.isDirectory()) return sourceFiles(path);
-		return /\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts") ? [path] : [];
+		if (entry.isDirectory()) return sourceFiles(path, match);
+		return matches(match, entry.name) ? [path] : [];
 	});
 }
 
-export const parse = (file) => ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+const KINDS = { ".tsx": ts.ScriptKind.TSX, ".jsx": ts.ScriptKind.JSX, ".js": ts.ScriptKind.JS, ".mjs": ts.ScriptKind.JS, ".cjs": ts.ScriptKind.JS };
+
+export const parse = (file) => ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, KINDS[/\.[^.]+$/.exec(file)?.[0]] ?? ts.ScriptKind.TS);
 
 export const lineOf = (source, node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
 
@@ -76,11 +82,12 @@ export function restrict({ root, folder, owners = [], find, allowed, list, fix, 
  * a rule is `{ find, owners?, allowed, fix, stale }`, as restrict takes. `find(source, { file, files })` gets the parsed
  * file, its path from the folder (with forward slashes), and every file's (by that path, to its whole path). A file's
  * sites count against it, by its path, as restrict counts them; a site with its own `key` (`${file} ${name}`) counts on
- * its own, against that entry. Each rule's problems come in the order the rules are given.
+ * its own, against that entry. Each rule's problems come in the order the rules are given. `match` picks the files by
+ * name, as sourceFiles does: TypeScript's unless it's given.
  */
-export function runRules({ root, folder, list, rules }) {
+export function runRules({ root, folder, list, rules, match }) {
 	const base = join(root, folder);
-	const paths = sourceFiles(base);
+	const paths = sourceFiles(base, match);
 	const files = new Map(paths.map((path) => [relative(base, path).split(sep).join("/"), path]));
 	const found = rules.map(() => []);
 	for (const [file, path] of files) {
@@ -102,11 +109,14 @@ export function runRules({ root, folder, list, rules }) {
 	});
 }
 
-/** Prints the problems and fails, or prints `ok`. */
-export function finish(lint, problems, ok) {
+/**
+ * Prints the problems and fails, or prints `ok`. It fails once they're all written: a long list to a pipe finishes
+ * later, and exiting first would cut it short.
+ */
+export async function finish(lint, problems, ok) {
 	if (problems.length > 0) {
 		console.error(`${lint}: ${problems.length} problem(s)\n${problems.map((problem) => `  ✗ ${problem}`).join("\n")}`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	console.log(`ok: ${ok}`);
 }

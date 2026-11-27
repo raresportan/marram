@@ -11,6 +11,7 @@
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
+import { matches } from "./pattern.mjs";
 import { lineOf, parse } from "./ratchet.mjs";
 
 export const WAITS = "@raresportan/marram/core/until";
@@ -102,6 +103,6 @@ export function checkProblems(source, waits = WAITS) {
 /** Problems in each file of `root`/`folder` whose name `match`es, as `path, problem`; and how many files there were. */
 export function lintChecks({ root, folder, match, waits = WAITS }) {
 	const base = join(root, folder);
-	const files = readdirSync(base).filter((name) => match.test(name)).map((name) => join(base, name));
+	const files = readdirSync(base).filter((name) => matches(match, name)).map((name) => join(base, name));
 	return { files: files.length, problems: files.flatMap((file) => checkProblems(parse(file), waits).map((problem) => `${relative(root, file)}: ${problem}`)) };
 }

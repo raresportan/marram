@@ -1,9 +1,10 @@
 // Does the gate still catch the defects it was built to catch? Usage: marram probe [fault name]…
 // Each fault in `probes.faults` is a patch that puts a known defect back, and the check that must catch it. In a
 // disposable copy of the working tree (uncommitted changes included, as the gate sees it), the check runs clean and must
-// pass, then runs with the patch applied and must fail for the reason given. A fault the check passes with is missed:
-// that defect can pass the gate again. One that can't be judged (the clean run fails, the patch no longer applies, the
-// check fails some other way) is inconclusive. Exits 1 unless every fault is caught.
+// pass, then runs with the patch applied and must fail for the reason given, then runs without it again and must pass,
+// so the failure is the patch's. A fault the check passes with is missed: that defect can pass the gate again. One that
+// can't be judged (the clean run fails, the patch no longer applies, the check fails some other way, or fails again
+// without the patch) is inconclusive. Exits 1 unless every fault is caught.
 //
 //   probes: {
 //     setup: ["npm", "ci"],          // optional: run once in the copy, before the faults
@@ -27,9 +28,10 @@ import { probesProblems } from "./config.mjs";
 import { runBounded } from "./bounded.mjs";
 import { spawnable } from "./command.mjs";
 import { outputExcerpt as excerpt } from "./failure-excerpt.mjs";
-import { jsonOption, printJson } from "./json-output.mjs";
+import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
+import { matches } from "./pattern.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
 
@@ -50,7 +52,7 @@ export function probe(root, config, given) {
 	const signals = ["SIGINT", "SIGTERM"].map((signal) => {
 		const stop = () => {
 			forget();
-			process.exit(128 + (signal === "SIGINT" ? 2 : 15));
+			exitWhenWritten(128 + (signal === "SIGINT" ? 2 : 15));
 		};
 		process.once(signal, stop);
 		return [signal, stop];
@@ -153,7 +155,7 @@ function judge(root, copy, project, fault, timeoutMs, observations, reset) {
 		if (result.error?.code === "ETIMEDOUT") return { state: "other", detail: `the check didn't finish within ${timeoutMs} ms` };
 		if (result.error || result.status === null) return { state: "other", detail: result.error?.message ?? "the check didn't finish" };
 		if (result.status === 0) return { state: "passed" };
-		const expected = fault.expect instanceof RegExp ? fault.expect.test(result.output) : result.output.includes(fault.expect);
+		const expected = fault.expect instanceof RegExp ? matches(fault.expect, result.output) : result.output.includes(fault.expect);
 		return { state: expected ? "expected" : "other", detail: excerpt(result.output) };
 	};
 	const clean = check();
@@ -178,8 +180,14 @@ function judge(root, copy, project, fault, timeoutMs, observations, reset) {
 		for (const [file, { atimeMs, mtimeMs }] of times) if (existsSync(file)) utimesSync(file, atimeMs / 1000, mtimeMs / 1000);
 	}
 	if (faulty.state === "passed") return { state: "missed" };
-	if (faulty.state === "expected") return { state: "caught" };
-	return { state: "inconclusive", detail: `failed, but not as expected: ${faulty.detail}` };
+	if (faulty.state !== "expected") return { state: "inconclusive", detail: `failed, but not as expected: ${faulty.detail}` };
+	// Caught only if the patch is why: run without it again, from the same start, and the check must pass. One that
+	// fails now fails on something the runs leave behind that the reset doesn't reach (a linked cache, a file outside
+	// the copy), so its failure with the patch says nothing about the patch.
+	reset();
+	const again = check();
+	if (again.state !== "passed") return { state: "inconclusive", detail: `caught, but the check fails again without the fault, so the fault may not be why: ${again.detail ?? again.state}` };
+	return { state: "caught" };
 }
 
 /**

@@ -20,8 +20,8 @@ export type Stale = string | ((key: string) => string);
  * matches.
  */
 export declare function ratchet(options: { list: string; allowed: Allowed; found: readonly Found[]; fix: string; stale: Stale }): string[];
-/** The TypeScript files under `folder`, declaration files aside. */
-export declare function sourceFiles(folder: string): string[];
+/** The files under `folder` whose names `match` matches: TypeScript's, declaration files aside, unless it's given. */
+export declare function sourceFiles(folder: string, match?: RegExp): string[];
 export declare const parse: (file: string) => SourceFile;
 export declare const lineOf: (source: SourceFile, node: Node) => number;
 /**
@@ -51,7 +51,10 @@ export interface Rule {
 	readonly fix: string;
 	readonly stale: Stale;
 }
-/** Every rule over the files under `root`/`folder`, each file parsed once: the rules' problems, in order. */
-export declare function runRules(options: { root: string; folder: string; list: string; rules: readonly Rule[] }): string[];
-/** Prints the problems and fails, or prints `ok`. */
-export declare function finish(lint: string, problems: readonly string[], ok: string): void;
+/**
+ * Every rule over the files under `root`/`folder`, each file parsed once: the rules' problems, in order. `match` picks
+ * the files by name: TypeScript's unless it's given.
+ */
+export declare function runRules(options: { root: string; folder: string; list: string; rules: readonly Rule[]; match?: RegExp }): string[];
+/** Prints the problems and fails once they're written, or prints `ok`. */
+export declare function finish(lint: string, problems: readonly string[], ok: string): Promise<void>;

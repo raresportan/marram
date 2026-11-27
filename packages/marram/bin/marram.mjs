@@ -36,11 +36,11 @@ if (command === "init" || command === "doctor") {
 }
 if (!(command in commands)) {
 	console.error("Usage: marram init | marram doctor | marram probe [fault]… | marram guard-diff <base> [--map <map>]… | marram replay <base> <test-file> <test-name> <expected assertion message> | marram replay <base> <test-file> --expect <text> -- <command>… | marram map-diff <base> <map> | marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>] (gate, probe, guard-diff and review-summary take --json)");
-	process.exit(1);
+	await exitWhenWritten(1);
 }
 // A config with problems is reported as what to fix, not as a crash.
 const { root, config } = await load().catch((error) => {
 	console.error(error.message);
-	process.exit(1);
+	return exitWhenWritten(1);
 });
 await commands[command](root, config, args);
