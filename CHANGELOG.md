@@ -7,25 +7,29 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 ### Fixed
 
 - **Gate and hooks**
-  - A full gate that runs stages together no longer answers for a default gate that runs them in order. Running a test
-    alongside the build it reads could pass on an old build, and the hooks reused that pass. `concurrent` is now part of
-    a stage's key; an unmarked stage's key is unchanged, so existing passes still count.
-  - `marram init` no longer writes its pre-push into a hooks folder outside the repository (a global
-    `core.hooksPath`), where every other repository would run it. It says what to do instead.
+  - A full gate answers for the default gate only when it runs the default's stages in the same groups.
+    - Before, a full gate that ran stages together, or ran apart stages the default runs together, could pass, and the
+      hooks reused that pass for a default gate that fails on the same tree.
+    - `concurrent` is now part of a stage's key, and coverage compares the groups each tier runs.
+    - A covering pass recorded by 0.3.0 no longer counts, so the default gate runs once after the upgrade. Other passes
+      still count.
+  - `marram init` no longer writes its pre-push into a hooks folder outside the repository, where every other
+    repository would run it. That covers a global `core.hooksPath` and a `.githooks` that links elsewhere. It says what
+    to do instead.
 - **Probes and replay**
-  - A probe's patched run starts from the copy as setup left it. Before, a check that failed on the clean run's own
-    leftovers was reported as catching the fault.
-  - A command that exits but leaves a process holding its output keeps its timeout. Before, a replay setup or probe
-    check could run past `timeoutMs` and still report success.
+  - A probe's patched run starts from the copy as setup left it, empty folders included. Before, a check that failed on
+    the clean run's leftovers, or on a folder the reset removed, was reported as catching the fault.
+  - A command's timeout covers whatever holds its output: processes it left in its group, and ones it started in a group
+    of their own. Before, a replay setup or probe check could run past `timeoutMs` and still report success.
   - `marram replay` with `--expect` but no `-- <command>` prints the usage, rather than looking for a test named
     `--expect`.
 - **guard-diff**
-  - Reports a test run alone (`.only`) in a test file the branch adds.
+  - Reports a test run alone (`.only`) in a test file the branch adds, or in a file renamed to a test file's name.
   - Reports stages that start or stop running together (`concurrent`).
-- **`--json`**: the whole document is written before the command exits. Before, a slow reader could get it cut off at
-  64 KB.
-- **Feature maps**: runtime evidence matches a citation pattern with the `g` or `y` flag on every citation, as the static
-  check already did.
+- **Output**: guard-diff's report, `--json` documents and the gate's failure output are written whole before the
+  command exits. Before, a slow reader, such as a CI step, could get them cut off at 64 KB.
+- **Patterns**: citation patterns, in the static check and in runtime evidence, and `review.subjects` match every citation
+  or subject, whatever their `g` or `y` flags. A sticky pattern still matches only from the start.
 - **Ratchets**: an import-boundary entry whose file was deleted says it's gone.
 
 ## 0.3.0 — 2026-11-27
