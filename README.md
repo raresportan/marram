@@ -278,7 +278,8 @@ runRules({
 ```
 
 A rule takes what `restrict` takes. `find` also gets `{ file, files }`: the file's path from the folder, and every
-file's. A site it returns with a `key` of its own (`${file} ${setter}`, as Tally's effects rule does) is listed and
+file's. `match` picks the files by name (TypeScript's, declaration files aside, unless it's given), so
+`match: /\.mjs$/` runs the rules over JavaScript modules. A site it returns with a `key` of its own (`${file} ${setter}`, as Tally's effects rule does) is listed and
 counted on its own, rather than against its file.
 
 ### 6. The first journey
@@ -349,7 +350,10 @@ changed in its guards since the merge base:
   `timeoutMs` that prepare their copy;
 - tests in the test files the branch changed: tests removed, newly skipped, newly run alone (`.only`), or making fewer
   assertions, and test files removed or renamed to a name that isn't a test file's;
-- citations removed from each feature map named with `--map <path>`, relative to where you run it.
+- citations removed from each feature map named with `--map <path>`, relative to where you run it;
+- any other field of the config it reports a change to (`gate.sleepGapMs`, `replay`'s and `review`'s), with its
+  values, and a field Marram doesn't read, anywhere in the config, as changed, without its value. Only `gate.logs`,
+  `keep` and `progress` aren't reported: they decide nothing that judges the code.
 
 Like map-diff, it reports and exits 0, leaving the decision to the reviewer.
 
@@ -435,9 +439,10 @@ probes: {
 `marram probe` copies the working tree, uncommitted changes included, as the gate sees it. For each fault, the check
 runs clean and must pass. It runs again with the patch applied and must fail: a `run` command with output matching
 `expect` (a RegExp, or text it must contain), or a node:test `test` at the assertion with that message, judged as replay
-judges it. Each fault is reported caught, missed (the check passed with the defect in place, so that defect can pass the
-gate again), or inconclusive (the clean run failed, the patch no longer applies, or the check failed for another
-reason). The command exits 1 unless every fault is caught. `marram probe "<name>"` runs the faults named.
+judges it. Then it runs without the patch once more and must pass, so the failure is the patch's. Each fault is
+reported caught, missed (the check passed with the defect in place, so that defect can pass the gate again), or
+inconclusive (the clean run failed, the patch no longer applies, the check failed for another reason, or it failed
+again without the patch). The command exits 1 unless every fault is caught. `marram probe "<name>"` runs the faults named.
 
 Paths and commands are the project's; a fault's `cwd` changes where its command runs. Patches apply at the repository
 root. Each fault then runs in the copy as setup left it, ignored build output included. Files a check made are removed,
@@ -494,7 +499,8 @@ every parsed file would take. Use it to decide whether a runner that parses each
 has the last numbers: at most 0.6s saved per thousand files, so not yet.
 
 CI (`.github/workflows/gate.yml`) runs `npm run gate:full` on every pull request and on main, on Ubuntu under
-`xvfb-run` and on Windows, and keeps each platform's gate logs when it fails. On Windows, a command a stage, probe or
+`xvfb-run`, on Windows and on macOS, and keeps each platform's gate logs when it fails. A job of its own runs
+actionlint and zizmor over the workflows. On Windows, a command a stage, probe or
 replay setup names that's installed as a `.cmd` or `.bat` script, such as `npm`, runs through `cmd.exe`, since Node
 won't start one directly. For a pull request it also runs `marram guard-diff` against the
 base branch and shows the result in the run's summary and in one comment on the pull request, edited on each push and

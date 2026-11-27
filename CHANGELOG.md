@@ -4,6 +4,15 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 
 ## Unreleased
 
+### Added
+
+- **Probes**: a fault counts as caught only if its check passes again without the patch, run from the same reset copy.
+  One that fails again is inconclusive, since its failure may not be the patch's. A caught fault's check runs three
+  times rather than two.
+- **guard-diff** reports a change to any config field it has no comparison of its own for: `gate.sleepGapMs`, `replay`'s
+  and `review`'s, with their values, and a field Marram doesn't read, anywhere in the config, without its value.
+- **Ratchets**: `runRules` takes `match`, the files to read by name, so rules can run over JavaScript modules.
+
 ### Fixed
 
 - **Replay and probe**
@@ -11,6 +20,10 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
     - Since 0.3.1 its output comes through a pipe, so commands that colour only for a terminal stopped. Marram now sets
       `FORCE_COLOR=1` for it when its own output is a terminal, unless the project's environment sets `FORCE_COLOR`
       or `NO_COLOR`. Output that marram captures and matches stays plain.
+- **Patterns**: `gate.progress`, a probe's `expect` and the check lint's `match` work whatever their `g` or `y` flags.
+  Before, `gate.progress: /step/g` showed every other matching line, and `lintChecks` read every other check file.
+- **Output**: a ratchet lint's `finish`, and every other way the commands exit, wait for what they wrote. Before, a
+  lint's list of problems longer than 64 KB reached a slow reader cut short. `finish` now returns a promise.
 
 ## 0.3.1 — 2026-11-27
 
