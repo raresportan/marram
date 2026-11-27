@@ -65,3 +65,11 @@ test("the static check reads a map saved with CRLF endings or trailing spaces as
 	const map = '- **Sidebar.**  \r\n  - ✅ sidebar › "The sidebar lists documents"  \r\n- **Gap**\r\n  - ❌ not yet\r\n- **Unmarked:**\r\n';
 	assert.deepEqual(read(map), { broken: [], unmarked: ["Unmarked"], features: 3, gaps: 1 });
 });
+
+test("a project's citation pattern with the g or y flag matches every line it should, not every other one", () => {
+	const map = ["- **Server.**", "  - ✅ server › a.ts", "  - ✅ server › b.ts", "  - ✅ server › c.ts"].join("\n");
+	for (const pattern of [/^server › (\S+)$/g, /server › (\S+)$/y]) {
+		const server = [{ pattern, broken: () => undefined }];
+		assert.deepEqual(read(map, server).broken, [], String(pattern));
+	}
+});
