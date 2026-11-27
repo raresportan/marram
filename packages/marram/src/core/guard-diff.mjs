@@ -126,7 +126,12 @@ function testChanges(repo, ancestor, before) {
 	for (let i = 0; i < changes.length; i++) {
 		const status = changes[i][0];
 		const [from, to] = status === "R" || status === "C" ? [changes[++i], changes[++i]] : [changes[++i], changes[i]];
-		if (status === "A" || status === "C" || !isTestFile(from)) continue;
+		// A new test file adds tests, which is no loss, but one it runs alone stops the others in the run (Mocha's whole run).
+		if (status === "A" || status === "C") {
+			if (isTestFile(to)) for (const found of testsIn(to, read(repo, to)) ?? []) if (found.only) lines.push(`now only: ${to} › ${found.name} (in a new file)`);
+			continue;
+		}
+		if (!isTestFile(from)) continue;
 		const was = testsIn(from, read(before, from));
 		// A helper beside the tests (test/helpers.mjs, tests/conftest.py) declares none: moving or removing it is no change.
 		if (status === "D") {

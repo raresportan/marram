@@ -541,6 +541,20 @@ test("guard-diff reports tests removed, newly skipped or with fewer assertions, 
 	}
 });
 
+test("a test run alone in a test file the branch adds is reported, as it stops the others running", () => {
+	const repo = repository();
+	try {
+		repo.write("packages/app/test/value.test.mjs", 'test("reads one", () => assert.ok(1));\n');
+		repo.commit();
+		repo.write("packages/app/test/focus.test.mjs", 'it.only("just this", () => assert.ok(1));\nit("and this", () => assert.ok(2));\n');
+		repo.write("packages/app/test/plain.test.mjs", 'it("new", () => assert.ok(1));\n');
+		const result = repo.diff();
+		assert.equal(result.stdout.split("\nTests\n")[1]?.split("\n\n")[0], "  now only: packages/app/test/focus.test.mjs › just this (in a new file)", result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("guard-diff reports a test now run alone, and not a test helper moved or removed", () => {
 	const repo = repository();
 	try {
