@@ -17,3 +17,6 @@ class Store {
 	write(value: number): void { void value; }
 }
 contract.handle(register, new Store());
+const reset = Symbol("reset");
+// @ts-expect-error an operation is named by a string: a symbol has no channel, so its client method wouldn't exist
+defineIpc("example", { read: operation<() => number>(), [reset]: operation<() => void>() });

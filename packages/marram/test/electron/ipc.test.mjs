@@ -38,3 +38,8 @@ test("a contract registers nothing when a handler is missing, and calls handlers
 	await registered.get("store:write")({}, 7);
 	assert.equal(await registered.get("store:read")({}), 7);
 });
+
+test("a contract with an operation keyed by a symbol is refused, rather than its client method silently missing", () => {
+	const reset = Symbol("reset");
+	assert.throws(() => defineIpc("counter", { read: operation(), [reset]: operation() }), /counter: an operation's name must be a string, not Symbol\(reset\)/);
+});

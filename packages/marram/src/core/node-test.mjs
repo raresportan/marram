@@ -34,7 +34,13 @@ export function runNamedTest({ cwd, file, name, assertion, output, timeout }) {
 	if (selected.length === 1) {
 		const row = selected[0];
 		if (row.passed && run.status === 0) return { state: "passed", detail: name };
-		if (run.status === 1 && row.code === "ERR_ASSERTION" && row.message?.split("\n")[0] === assertion) return { state: "failed assertion", detail: row.message };
+		// Anything else that failed in the run (a teardown hook, the file itself) leaves the failure not only the assertion's,
+		// so it proves nothing a fix made pass. The suites around the test fail with it, as `subtestsFailed`.
+		const other = rows.find((found) => found !== row && !found.passed && !found.skipped && found.failureType !== "subtestsFailed");
+		if (run.status === 1 && row.code === "ERR_ASSERTION" && row.message?.split("\n")[0] === assertion) {
+			if (other !== undefined) return { state: "inconclusive", detail: `The assertion failed, and so did ${other.name}: ${other.message ?? other.failureType}` };
+			return { state: "failed assertion", detail: row.message };
+		}
 		if (row.failureType === "subtestsFailed") return { state: "inconclusive", detail: `"${name}" is a suite: name the test inside it that makes the assertion` };
 	}
 	return { state: "inconclusive", detail: rows.find((row) => row.message)?.message ?? "Selected test did not produce one completed result" };
