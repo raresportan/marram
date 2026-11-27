@@ -3,7 +3,8 @@
 # this job checks out only the default branch's report script, and treats the artifact the run left as text.
 name: Guard report
 
-on:
+# workflow_run is what keeps the write token from the pull request's code (above); zizmor flags the trigger itself.
+on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: [Gate]
     types: [completed]
