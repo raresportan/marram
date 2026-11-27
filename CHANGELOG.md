@@ -2,6 +2,16 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
+## Unreleased
+
+### Fixed
+
+- **Replay and probe**
+  - A command whose output goes to the terminal (replay's setup, a node:test run) colours it again.
+    - Since 0.3.1 its output comes through a pipe, so commands that colour only for a terminal stopped. Marram now sets
+      `FORCE_COLOR=1` for it when its own output is a terminal, unless the project's environment sets `FORCE_COLOR`
+      or `NO_COLOR`. Output that marram captures and matches stays plain.
+
 ## 0.3.1 — 2026-11-27
 
 ### Fixed
