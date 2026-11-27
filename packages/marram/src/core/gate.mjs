@@ -35,7 +35,7 @@ function alive(pid) {
 }
 
 /** Whether the run in `folder` is still going: its marker names a process that's running. */
-async function running(folder) {
+async function stillGoing(folder) {
 	const pid = Number(await readFile(join(folder, RUNNING), "utf8").catch(() => ""));
 	return Number.isSafeInteger(pid) && pid > 0 && alive(pid);
 }
@@ -51,7 +51,7 @@ export async function pruneLogs(logs, keep) {
 		.sort((a, b) => b.time.localeCompare(a.time));
 	await Promise.all(runs.slice(keep).map(async ({ name }) => {
 		const folder = join(logs, name);
-		if (!(await running(folder))) await rm(folder, { recursive: true, force: true });
+		if (!(await stillGoing(folder))) await rm(folder, { recursive: true, force: true });
 	}));
 }
 

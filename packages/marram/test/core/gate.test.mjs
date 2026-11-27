@@ -137,7 +137,14 @@ test("a run still going keeps its folder while another gate prunes, and one whos
 		const logs = join(root, "logs");
 		let firstRun;
 		try {
-			while (!(existsSync(logs) && readdirSync(logs).some((name) => existsSync(join(logs, name, "wait.log"))))) await new Promise((done) => setTimeout(done, 50));
+			// Until its stage has started, unless the gate ends first or it takes past 20s.
+			let ended = false;
+			exited.then(() => { ended = true; });
+			const until = Date.now() + 20_000;
+			while (!(existsSync(logs) && readdirSync(logs).some((name) => existsSync(join(logs, name, "wait.log"))))) {
+				assert.ok(!ended && Date.now() < until, `the first gate's stage never started:\n${output}`);
+				await new Promise((done) => setTimeout(done, 50));
+			}
 			[firstRun] = readdirSync(logs);
 
 			const second = spawnSync(process.execPath, [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
