@@ -48,6 +48,11 @@ test("a project words its review fixes with review.subjects", () => {
 	assert.equal(against("Rework after QA\n\n- X.\n", own).length, 1);
 	assert.deepEqual(against("Fix review findings\n\n- X.\n", own), []);
 	assert.throws(() => subjectsOf({ review: { subjects: "Rework" } }), /review\.subjects .* is a RegExp/);
+	// Sticky: a subject that starts with it, every time, and not one that has it further on.
+	const sticky = { ...rules, subjects: subjectsOf({ review: { subjects: /Rework after QA\b/y } }) };
+	assert.equal(against("Rework after QA\n\n- X.\n", sticky).length, 1);
+	assert.equal(against("Rework after QA\n\n- X.\n", sticky).length, 1);
+	assert.deepEqual(against("Some Rework after QA\n\n- X.\n", sticky), []);
 });
 
 test("the classes are the project's: its doc's table rows, and its rungs", () => {

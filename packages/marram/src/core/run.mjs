@@ -67,10 +67,15 @@ export async function runJourneys({ chosen, run, open, evidence, featureMap }) {
 	}
 	const missing = [];
 	if (featureMap) {
-		// Without g or y: with either, test() starts where the last match ended, and a citation after one it matched is missed.
-		const custom = (featureMap.custom ?? []).map((pattern) => new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, "")));
+		// Copies, with their flags (sticky still means "from the start"), each tested from a citation's start: with g or y,
+		// test() starts where the last match ended, and a citation after one it matched would be missed.
+		const custom = (featureMap.custom ?? []).map((pattern) => new RegExp(pattern.source, pattern.flags));
+		const matches = (pattern, citation) => {
+			pattern.lastIndex = 0;
+			return pattern.test(citation);
+		};
 		for (const { feature, citation } of mapCitations(readFileSync(featureMap.path, "utf8"))) {
-			if (custom.some((pattern) => pattern.test(citation)))
+			if (custom.some((pattern) => matches(pattern, citation)))
 				continue;
 			const match = /^([\w-]+)(?: › "(.+)")?$/.exec(citation);
 			const result = results.find((row) => row.journey === match?.[1]);

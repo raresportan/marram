@@ -73,6 +73,20 @@ test("a project's citation pattern with the g or y flag covers every citation it
 	}
 });
 
+test("a sticky citation pattern counts only citations that start with it at runtime", async () => {
+	const evidence = mkdtempSync(join(tmpdir(), "marram-observations-"));
+	try {
+		const path = join(evidence, "map.md");
+		writeFileSync(path, '- **Checkout**\n  - ✅ checkout › "external integration"\n  - ✅ external › payments');
+		const options = { chosen: [], evidence, featureMap: { path, custom: [/external/y] }, open: () => ({ ...session(), dispose: async () => {} }), run: async () => {} };
+		assert.equal(await runJourneys(options), false);
+		assert.match(readFileSync(join(evidence, "missing-citations.json"), "utf8"), /checkout › \\"external integration\\"/);
+		assert.doesNotMatch(readFileSync(join(evidence, "missing-citations.json"), "utf8"), /external › payments/);
+	} finally {
+		rmSync(evidence, { recursive: true, force: true });
+	}
+});
+
 test("a journey that throws doesn't stop the run when its session's shot isn't async", async () => {
 	const evidence = mkdtempSync(join(tmpdir(), "marram-shot-"));
 	try {
