@@ -89,6 +89,19 @@ test("the patched run starts from the copy as setup left it, not from what the c
 	}
 });
 
+test("the reset between the runs keeps the empty folders setup made", () => {
+	// Setup makes an empty build/ that the check needs, and the check never reads value.cjs, which the patch changes.
+	const needsBuild = '{ name: "a build folder", patch: "probes/zero.patch", run: ["node", "-e", "if (!require(\\"fs\\").existsSync(\\"build\\")) { console.log(\\"stored value\\"); process.exit(1); }"], expect: /stored value/ }';
+	const repo = project(needsBuild, 'setup: ["node", "-e", "require(\\"fs\\").mkdirSync(\\"build\\")"],');
+	try {
+		const result = repo.probe();
+		assert.equal(result.status, 1, result.stdout + result.stderr);
+		assert.match(result.stdout, /^✗ a build folder: missed: the check passed with the fault in place$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a check weakened in the working tree misses the fault, and says so", () => {
 	const repo = project(`${BY_COMMAND}, ${BY_TEST}`);
 	try {
