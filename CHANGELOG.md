@@ -1,0 +1,74 @@
+# Changelog
+
+Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
+
+## 0.3.0 — 2026-11-27
+
+### Added
+
+- **`marram init`** sets a project up: a `marram.config.mjs` built from its npm scripts, `.verify/` ignored, and a
+  pre-push hook. **`marram doctor`** says what's missing or wrong in that setup.
+- **`marram guard-diff <base>`** reports what a branch changed in the checks that judge it:
+  - the gate's tiers and stages, and `gate.env`;
+  - the package scripts a stage runs, in each workspace it names (`-w`, `--workspaces`), with npm's pre and post scripts;
+  - hooks, and probes;
+  - tests removed, newly skipped, run alone or emptied of assertions (JavaScript and TypeScript, Python, Go);
+  - citations removed from a feature map.
+
+  CI posts it on each pull request.
+- **`marram probe`** puts known defects back, one patch at a time, in a copy of the working tree, and checks that the gate
+  still catches each one.
+- **`marram replay <base> …`** shows a fix on two revisions: the regression test fails on the base, with the expected
+  assertion, and passes on HEAD.
+  - It works with any test runner: `--expect "<text>" -- <command>`.
+  - It has a setup command, and a timeout that stops what the test started.
+- **Concurrent gate stages:** a stage marked `concurrent: true` runs alongside the stages next to it that are marked too.
+- **`--json`** on `gate`, `probe`, `guard-diff` and `review-summary`: the result as JSON on stdout, the usual lines on
+  stderr.
+- **`runRules`** (`core/ratchet`) runs several ratchet rules over one parse of each file. `importBoundaryRule`
+  (`core/boundaries`) puts the import boundaries in with them.
+- **`importsOf`** (`core/boundaries`) is a ratchet finder for imports of named modules, so only their owner uses them.
+- **`marram review-summary`** groups review-fix findings by mistake class and rung.
+- **Typed Electron IPC** (`electron/ipc`): the host's handlers and the preload's methods come from one contract.
+- **Runtime evidence for a feature map:** journeys record what they checked, and a citation of a check that never ran
+  fails (`core/run`, `core/feature-map`, `core/journey-lint`).
+- **`gate.keep`** keeps the newest runs' logs (20 unless set), and never removes the logs of a gate still running.
+- **Declarations** for every module the package exports.
+
+### Changed
+
+These may need something from you when you upgrade.
+
+- **The config is checked as a whole when it loads,** whichever command runs. A misspelled key or a value of the wrong
+  kind is now an error that names it, where before it was ignored.
+- **The TypeScript modules are published compiled** (`.js` with `.d.ts`). Plain Node and any bundler can import them;
+  `tsx` isn't needed.
+- **A gate verdict counts only while the configuration gives the stages it ran.** That covers their commands, arguments
+  and `env`, and the inherited variables that `gate.env` names. A full pass counts for the default gate only when it ran
+  the default stages.
+- **`replay`** treats a base that fails the assertion and something else too (a teardown hook, say) as inconclusive, not
+  proof.
+- **Import rules** tell a builtin reachable only as `node:` (`node:sqlite`) from a package with its bare name (`sqlite`).
+- **The React effect lint** reads only React's own `useEffect` and `useState`: bare, or on `React` or a name "react" is
+  imported as.
+- **`defineIpc`** refuses an operation keyed by a symbol, as a type error and at runtime.
+- **`no-comments`** allows a doc comment only on a declaration.
+- **`commit-lint`** checks more review-fix subjects: review comments, PR feedback, nits.
+
+### Fixed
+
+- **Gate and hooks**
+  - A same-size edit is no longer missed when the gate hashes the working tree.
+  - A nested project's pass no longer satisfies the root project's hook.
+  - Overlapping builds and log pruning are safe.
+- **Commands**
+  - A setup or test past its timeout, and what it started, is stopped, with SIGKILL after a grace period.
+  - Each probe fault runs in the copy as setup left it.
+- **Journeys**
+  - A journey session that can't be opened or closed fails its journey, and the run goes on.
+- **Windows**
+  - `.cmd` and `.bat` commands run through `cmd.exe`, even where PATHEXT leaves them out.
+  - A relative folder on PATH is found from the stage's folder.
+  - Windows is covered by the full gate in CI.
+- **Feature maps**
+  - A citation pattern with the `g` or `y` flag matches every line it should.
