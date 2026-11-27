@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
 
@@ -32,7 +32,7 @@ export interface Launch {
 	readonly main: string;
 	/** Extra environment for the main process. */
 	readonly env?: Record<string, string>;
-	/** Where the bootstrap goes, which Electron takes as the app's path. */
+	/** Where the bootstrap goes, which Electron takes as the app's path. Each session's bootstrap has a name of its own there. */
 	readonly appDir?: string;
 	/** Keep Chromium drawing every frame while the window is in the background or covered, to measure frame rates. */
 	readonly unthrottled?: boolean;
@@ -56,6 +56,8 @@ export class JourneySession {
 	readonly scratch: string;
 	readonly userData: string;
 	#windowId: string | undefined;
+	/** Bootstraps written outside the scratch folder, into a project's `appDir`: removed at dispose. */
+	#placed = new Set<string>();
 	#osCapture: boolean;
 
 	constructor(name: string, options: JourneyOptions, prefix = "marram-verify") {
@@ -69,7 +71,10 @@ export class JourneySession {
 
 	/** Start the app (again, with the same profile after `close`), and wait for its first window. */
 	protected async start({ executablePath, main, env = {}, appDir = this.scratch, unthrottled = false, prelude = [] }: Launch): Promise<void> {
-		const bootstrap = join(appDir, "bootstrap.mjs");
+		// Named for this session: an appDir may be the project's, which journeys running at once share, and each bootstrap
+		// sets its own session's profile.
+		const bootstrap = join(appDir, `bootstrap-${basename(this.scratch)}.mjs`);
+		if (appDir !== this.scratch) this.#placed.add(bootstrap);
 		writeFileSync(
 			bootstrap,
 			[
@@ -180,6 +185,7 @@ export class JourneySession {
 	/** Close the app and remove the scratch folder (unless `keep`). A project that starts more ends it first. */
 	async dispose(): Promise<void> {
 		await this.close();
+		for (const bootstrap of this.#placed) rmSync(bootstrap, { force: true });
 		if (this.options.keep) console.log(`  kept ${this.scratch}`);
 		else rmSync(this.scratch, { recursive: true, force: true });
 	}
