@@ -21,7 +21,10 @@ export function staleInput(root, builds) {
 }
 
 /** Whether a journey's result fails it. */
-export const failed = (result) => result.error !== undefined || result.pageErrors.length > 0 || result.checks.some((check) => !check.ok);
+export const failed = (result) => result.error !== undefined || result.cleanup !== undefined || result.pageErrors.length > 0 || result.checks.some((check) => !check.ok);
+
+/** A thrown value's message. */
+const messageOf = (thrown) => (thrown instanceof Error ? thrown.message : String(thrown));
 
 /**
  * Run each of `chosen` with a session `open` makes for it (given its evidence folder under `evidence`), and write
@@ -31,20 +34,36 @@ export async function runJourneys({ chosen, run, open, evidence, featureMap }) {
 	mkdirSync(evidence, { recursive: true });
 	const results = [];
 	for (const journey of chosen) {
-		const session = open(journey, join(evidence, journey));
 		console.log(`\n${journey}`);
+		// A session that can't be opened, or closed, fails its journey, and the run goes on to the next one and its report.
+		let session;
+		try {
+			session = open(journey, join(evidence, journey));
+		} catch (failure) {
+			const error = `couldn't open its session: ${messageOf(failure)}`;
+			console.log(`  ✗ ${error}`);
+			results.push({ journey, checks: [], error, pageErrors: [] });
+			continue;
+		}
 		let error;
 		try {
 			await run(journey, session);
 		} catch (failure) {
-			error = failure instanceof Error ? failure.message : String(failure);
+			error = messageOf(failure);
 			console.log(`  ✗ ${error}`);
 			// Evidence is best effort: a session's shot may throw, or not return a promise at all.
 			await Promise.resolve().then(() => session.shot?.("failure")).catch(() => {});
-		} finally {
-			await session.dispose?.();
 		}
-		results.push(judge(journey, session, error));
+		let cleanup;
+		try {
+			await session.dispose?.();
+		} catch (failure) {
+			// It may have left a window or a process behind.
+			cleanup = messageOf(failure);
+			console.log(`  ✗ couldn't close its session: ${cleanup}`);
+		}
+		const result = judge(journey, session, error);
+		results.push(cleanup === undefined ? result : { ...result, cleanup });
 	}
 	const missing = [];
 	if (featureMap) {

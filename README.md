@@ -68,7 +68,9 @@ Ignore `.verify/` in Git, install Marram as a development tool, and run `npx mar
 It exits 1 when there's a problem to fix.
 For a plain Node CLI, a stage can run `["node", "--test"]`. The TypeScript lints and Electron adapter are optional.
 For named behavioral checks, import `runJourneys` from `@raresportan/marram/core/run` and provide a session with
-a `checks` array of `{ label, ok }` observations. The runner writes the report and checks feature-map citations.
+a `checks` array of `{ label, ok }` observations. The runner writes the report and checks feature-map citations. A
+session that can't be opened, or whose `dispose` throws, fails its journey (the latter as `cleanup` in the report), and
+the run goes on to the next journey.
 Projects can supply their own CLI, HTTP or browser driver. Tally below demonstrates the Electron adapter.
 
 ## Tutorial: Tally
