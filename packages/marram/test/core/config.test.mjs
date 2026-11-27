@@ -58,6 +58,8 @@ test("a value of the wrong kind is named, wherever it is", () => {
 	]);
 	assert.deepEqual(problems({ gate: { keep: Infinity, tiers: {} } }), []);
 	assert.deepEqual(problems({ gate: { keep: 2.5, tiers: {} } }), ["gate.keep must be how many runs to keep logs for: a whole number above 0, or Infinity"]);
+	assert.deepEqual(problems({ gate: { env: "CI", tiers: {} } }), ['gate.env must be a list of environment variable names, as in ["CI", "NODE_ENV"]']);
+	assert.deepEqual(problems({ gate: { env: ["CI", "NODE_ENV"], tiers: {} } }), []);
 });
 
 test("probes are checked as probe checks them, and a fault's keys too", () => {

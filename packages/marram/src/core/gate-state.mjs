@@ -1,7 +1,8 @@
 // What the gate said about each state of the working tree, so a hook doesn't run it again for code it has judged.
 // Kept in the repository's git folder (shared by its worktrees): marram-gate.json.
-import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHmac, randomBytes } from "node:crypto";
+import { closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -99,18 +100,95 @@ export function updateState(cwd, change) {
 	});
 }
 
+/** One stage as the gate runs it: its command and arguments, and its environment in a fixed order. */
+export const stageText = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+
+// The secret that stage keys are made with, in its own file beside the state and readable only by its owner: the state
+// holds keys, and with the secret beside them a reader could check guesses at a stage's low-entropy values.
+const keyPath = (cwd) => join(resolve(cwd, git(cwd, ["rev-parse", "--git-common-dir"])), "marram-gate.key");
+
+const SECRET = /^[0-9a-f]{64}$/;
+
+/** The secret at `path` if it's a whole one, or undefined. */
+function readSecret(path) {
+	try {
+		const text = readFileSync(path, "utf8");
+		return SECRET.test(text) ? text : undefined;
+	} catch (error) {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
 /**
- * `{ passed, tier, stage?, log?, coversDefault?, at }` for a tree `tier` (the default gate, or the full one) passed, or
- * failed less than 15 minutes ago. A full pass counts for the default gate when it ran that gate's stages.
+ * Leave `file` readable by its owner only. On Windows a file's mode doesn't do that, so its inherited permissions are
+ * removed and its owner given full control (icacls); where that fails, the file keeps what its folder gives.
  */
-export function verdictOf(cwd, tree, tier = "default") {
-	const trees = readState(cwd).trees;
+function ownerOnly(file) {
+	if (process.platform !== "win32") return;
+	const user = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
+	if (user) spawnSync("icacls", [file, "/inheritance:r", "/grant:r", `${user}:F`], { stdio: "ignore" });
+}
+
+/**
+ * The secret for stage keys, or undefined when there's none yet; `create` makes it then. It's written whole to a file
+ * of its own, made owner-only, and only then published under its name with a hard link, which fails if a secret is
+ * already there: a gate starting at the same moment reads a whole secret or none, and both end up with the same one.
+ * One that isn't whole (written some other way, or cut short) counts as none, and `create` replaces it.
+ */
+function secretOf(cwd, create) {
+	const path = keyPath(cwd);
+	const found = readSecret(path);
+	if (found !== undefined || !create) return found;
+	const staged = `${path}.${process.pid}.tmp`;
+	try {
+		writeFileSync(staged, randomBytes(32).toString("hex"), { mode: 0o600 });
+		ownerOnly(staged);
+		try {
+			linkSync(staged, path);
+		} catch {
+			// Another gate published one first (keep theirs), or what's there isn't whole, or the file system has no hard
+			// links: then a rename puts this one there.
+			if (readSecret(path) === undefined) renameSync(staged, path);
+		}
+	} finally {
+		rmSync(staged, { force: true });
+	}
+	return readSecret(path);
+}
+
+/**
+ * A function from a tier's stages to the key a verdict on them keeps, for the project's `gate` configuration. The key is
+ * an HMAC over each stage's command, arguments and `env`, and over the inherited variables `gate.env` names (each one's
+ * value, or that it's unset): what decides whether a verdict still answers for the stages as the gate would run them
+ * now. Other inherited variables don't count, since PATH, the terminal's and a hook's own differ from run to run. The key
+ * gives away nothing of what it's over, which may hold secrets. With no secret yet and `create` unset, there are no keys.
+ */
+export function stageKeys(cwd, gate, { create = false } = {}) {
+	const secret = secretOf(cwd, create);
+	if (secret === undefined) return () => undefined;
+	const inherited = [...(gate?.env ?? [])].sort().map((name) => [name, process.env[name] ?? null]);
+	return (stages) => (Array.isArray(stages) ? createHmac("sha256", secret).update(JSON.stringify([stages.map(stageText), inherited])).digest("hex") : undefined);
+}
+
+/**
+ * `{ passed, tier, stage?, log?, stages, coversDefault?, at }` for a tree `tier` (the default gate, or the full one)
+ * passed, or failed less than 15 minutes ago, running the stages the project's `gate` configuration (as loaded now)
+ * gives it. The configuration may build its stages from the environment, so the same tree can need other stages than
+ * a verdict ran: that verdict doesn't count. A full pass counts for the default gate when it ran the default stages the
+ * configuration gives now.
+ */
+export function verdictOf(cwd, tree, tier, gate) {
+	const key = stageKeys(cwd, gate);
+	const wanted = key(gate?.tiers?.[tier]);
+	if (wanted === undefined) return undefined;
+	const { trees } = readState(cwd);
 	const project = projectTreeKey(cwd, tree);
-	const own = current(trees[verdictKey(project, tier)]);
-	// Decided by the gate from the configuration in the tree it tested, not from the one checked out when this is read.
+	const own = current(trees[verdictKey(project, tier, wanted)]);
 	if (own === undefined && tier === "default") {
-		const full = trees[verdictKey(project, "full")];
-		if (full?.passed && full.coversDefault === true) return full;
+		const full = `${verdictKey(project, "full")}:`;
+		const covering = Object.entries(trees).find(([slot, verdict]) => slot.startsWith(full) && verdict.passed && verdict.coversDefault === wanted);
+		if (covering !== undefined) return covering[1];
 	}
 	return own;
 }
@@ -121,4 +199,8 @@ const current = (verdict) => (verdict === undefined || verdict.passed || Date.no
 /** The config directory within the worktree distinguishes projects sharing the same Git tree and state file. */
 export const projectTreeKey = (cwd, tree) => JSON.stringify([git(cwd, ["rev-parse", "--show-prefix"]), tree]);
 
-export const verdictKey = (projectTree, tier) => (tier === "full" ? `${projectTree}:full` : projectTree);
+/**
+ * Where a verdict is kept: per project and tree, tier, and the key of the stages it ran, so gates running other stages on
+ * the same tree (another environment, at the same time) keep a verdict each.
+ */
+export const verdictKey = (projectTree, tier, stages) => `${tier === "full" ? `${projectTree}:full` : projectTree}${stages === undefined ? "" : `:${stages}`}`;

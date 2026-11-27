@@ -6,6 +6,7 @@
 //       keep: 20,   // how many of the gate's runs to keep logs for, the newest; 20 unless set (Infinity keeps all)
 //       progress: /lines from a stage worth showing as it runs/,   // besides ✓ and ✗ lines
 //       sleepGapMs: 30000,   // how long a pause counts as the machine sleeping, so a stage that failed runs again
+//       env: ["CI"],   // inherited variables whose values decide whether a verdict still counts (gate-state.mjs)
 //       tiers: { fast: [stage, …], default: [stage, …], full: [stage, …] },  // stage: { name, run: [command, …args], env? }
 //       prePush: "full",   // the gate a push must pass (marram hook pre-push): "default" unless set
 //     },
@@ -34,12 +35,39 @@ export function findRoot(from = process.cwd()) {
 	}
 }
 
+/**
+ * The config at `root`, unchecked, evaluated from `root` whatever folder the command was run in: a config may build its
+ * stages from process.cwd(), and the gate a hook starts runs from the root, so both must see the same. Its `gate` is
+ * read once, there, into plain values: a getter gives the gate one set of stages, which it both runs and records a
+ * verdict for, rather than one to run and another when the verdict is recorded.
+ */
+export async function importConfig(root) {
+	const from = process.cwd();
+	process.chdir(root);
+	try {
+		const config = (await import(pathToFileURL(join(root, FILE)).href)).default;
+		if (!isObject(config) || config.gate === undefined) return config;
+		return { ...config, gate: snapshot(config.gate) };
+	} finally {
+		process.chdir(from);
+	}
+}
+
+/** `value` read once into plain data: getters run now. A RegExp stays one; a value that can't be copied (a function) is left as is. */
+function snapshot(value) {
+	try {
+		return structuredClone(value);
+	} catch {
+		return value;
+	}
+}
+
 /** The project root, the nearest folder from `from` up that has a marram.config.mjs, and its config, checked. */
 export async function load(from = process.cwd()) {
 	const root = findRoot(from);
 	if (root === undefined) throw new Error(`No ${FILE} in ${resolve(from)} or above it.`);
 	const file = join(root, FILE);
-	const config = (await import(pathToFileURL(file).href)).default;
+	const config = await importConfig(root);
 	const found = problems(config);
 	if (found.length > 0) throw new Error(`${file} isn't what Marram reads:\n${found.map((problem) => `  ${problem}`).join("\n")}`);
 	return { root, config };
@@ -88,7 +116,8 @@ function stageProblems(stage, label) {
 /** What's wrong with `gate`. */
 function gateProblems(gate) {
 	if (!isObject(gate)) return ["gate must be an object: { logs, tiers, … }"];
-	const found = unknownKeys(gate, "gate", ["logs", "keep", "progress", "sleepGapMs", "tiers", "prePush"]);
+	const found = unknownKeys(gate, "gate", ["logs", "keep", "progress", "sleepGapMs", "env", "tiers", "prePush"]);
+	if (gate.env !== undefined && !(Array.isArray(gate.env) && gate.env.every(isText))) found.push('gate.env must be a list of environment variable names, as in ["CI", "NODE_ENV"]');
 	if (gate.logs !== undefined && !isText(gate.logs)) found.push("gate.logs must be a folder in the project");
 	if (gate.keep !== undefined && !(isPositive(gate.keep) && (Number.isInteger(gate.keep) || gate.keep === Infinity))) found.push("gate.keep must be how many runs to keep logs for: a whole number above 0, or Infinity");
 	if (gate.progress !== undefined && !(gate.progress instanceof RegExp)) found.push("gate.progress must be a RegExp");

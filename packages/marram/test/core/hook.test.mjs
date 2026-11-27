@@ -1,8 +1,8 @@
 // The pre-push hook against the gate a project asks of a push (`gate.prePush`), reusing what a gate already passed.
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -162,6 +162,153 @@ test("a push is judged by the configuration of the tree the full gate ran on, no
 		repo.configure({ fast: [], default: [build], full: [build] });
 		const push = repo.push(sha);
 		assert.equal(push.status, 1, "the pushed commit's own default gate fails");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a verdict counts only while the configuration gives the stages it ran, which the environment can change", () => {
+	const repo = project();
+	try {
+		// Stages built from the environment: with EXTRA set, the default gate also runs a stage that fails.
+		const [d, f, x] = [stage("d"), stage("f"), stage("x", { code: 1 })];
+		writeFileSync(join(repo.root, "marram.config.mjs"), `const extra = process.env.EXTRA ? [${JSON.stringify(x)}] : [];\nexport default { gate: { logs: "logs", tiers: { fast: [], default: [${JSON.stringify(d)}, ...extra], full: [${JSON.stringify(d)}, ${JSON.stringify(f)}] } } };\n`);
+		repo.commit("one");
+		const finish = (env = {}) => spawnSync("node", [BIN, "hook", "finish"], { cwd: repo.root, encoding: "utf8", env: { ...process.env, ...env } });
+
+		assert.equal(repo.gate("full").status, 0);
+		assert.equal(finish().status, 0, "the full pass covers the default stages as configured");
+		assert.equal(repo.runs(), "df");
+		const extra = finish({ EXTRA: "1" });
+		assert.equal(extra.status, 1, "with EXTRA the default gate has a stage the full pass didn't run");
+		assert.equal(repo.runs(), "dfdx");
+
+		assert.equal(repo.gate().status, 0);
+		assert.equal(repo.runs(), "dfdxd");
+		assert.equal(finish().status, 0, "the default pass is reused for the same stages");
+		assert.equal(finish({ EXTRA: "1" }).status, 1, "but not for others");
+		assert.equal(repo.runs(), "dfdxd", "whose own failure, under 15 minutes old, is reused");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("an inherited variable gate.env names decides whether a verdict counts, and one it doesn't name doesn't", () => {
+	const repo = project();
+	try {
+		// The stage fails when FAIL is set, which it inherits rather than being given.
+		const d = { name: "d", run: ["node", "-e", 'require("fs").appendFileSync("runs", "d"); process.exit(process.env.FAIL ? 1 : 0)'] };
+		const configure = (env) => writeFileSync(join(repo.root, "marram.config.mjs"), `export default ${JSON.stringify({ gate: { logs: "logs", ...env, tiers: { fast: [], default: [d], full: [d] } } })};\n`);
+		const finish = (env = {}) => spawnSync("node", [BIN, "hook", "finish"], { cwd: repo.root, encoding: "utf8", env: { ...process.env, ...env } });
+		configure({ env: ["FAIL"] });
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		assert.equal(finish({ FAIL: "1" }).status, 1, "FAIL is named, so the pass made without it doesn't count");
+		assert.equal(repo.runs(), "dd");
+
+		configure({});
+		repo.commit("two");
+		assert.equal(repo.gate().status, 0);
+		assert.equal(finish({ FAIL: "1" }).status, 0, "unnamed, an inherited variable doesn't count: the pass is reused");
+		assert.equal(repo.runs(), "ddd");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("finish in a folder of the project judges the config as the gate does, from the project's root", () => {
+	const repo = project();
+	try {
+		// A stage built from the folder the config is evaluated in.
+		writeFileSync(join(repo.root, "marram.config.mjs"), 'const d = { name: "d", run: ["node", "-e", `require("fs").appendFileSync("runs", "d")`, process.cwd()] };\nexport default { gate: { logs: "logs", tiers: { fast: [], default: [d], full: [d] } } };\n');
+		mkdirSync(join(repo.root, "sub"));
+		writeFileSync(join(repo.root, "sub", "file.txt"), "x");
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		const finish = spawnSync("node", [BIN, "hook", "finish"], { cwd: join(repo.root, "sub"), encoding: "utf8" });
+		assert.equal(finish.status, 0, finish.stdout + finish.stderr);
+		assert.equal(repo.runs(), "d", "the pass is reused");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("gates run with different stages on the same tree keep a verdict each, and the secret isn't kept with them", () => {
+	const repo = project();
+	try {
+		const d = { name: "d", run: ["node", "-e", 'require("fs").appendFileSync("runs", process.env.MODE)'] };
+		writeFileSync(join(repo.root, "marram.config.mjs"), `export default ${JSON.stringify({ gate: { logs: "logs", env: ["MODE"], tiers: { fast: [], default: [d], full: [d] } } })};\n`);
+		repo.commit("one");
+		const run = (args, MODE) => spawnSync("node", [BIN, ...args], { cwd: repo.root, encoding: "utf8", env: { ...process.env, MODE } });
+		assert.equal(run(["gate"], "a").status, 0);
+		assert.equal(run(["gate"], "b").status, 0);
+		assert.equal(run(["hook", "finish"], "a").status, 0);
+		assert.equal(run(["hook", "finish"], "b").status, 0);
+		assert.equal(repo.runs(), "ab", "each environment's pass is still there");
+
+		const key = join(repo.root, ".git", "marram-gate.key");
+		const secret = readFileSync(key, "utf8");
+		assert.doesNotMatch(readFileSync(join(repo.root, ".git", "marram-gate.json"), "utf8"), new RegExp(secret));
+		if (process.platform !== "win32") assert.equal(statSync(key).mode & 0o777, 0o600);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("the gate records its verdict for the stages it ran, though a getter would give others afterwards", () => {
+	const repo = project();
+	try {
+		// The default tier is a getter: stage d until "runs" exists (d makes it), then x, which fails.
+		const [d, x] = [stage("d"), stage("x", { code: 1 })];
+		writeFileSync(join(repo.root, "marram.config.mjs"), `import { existsSync } from "node:fs";\nexport default { gate: { logs: "logs", tiers: { fast: [], full: [], get default() { return existsSync("runs") ? [${JSON.stringify(x)}] : [${JSON.stringify(d)}]; } } } };\n`);
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		assert.equal(repo.runs(), "d");
+		const finish = repo.finish();
+		assert.equal(finish.status, 1, "the default tier is x now, which the pass for d doesn't answer for");
+		assert.equal(repo.runs(), "dx");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("the secret is published whole: a cut-short one is replaced, and gates starting at once share one", async () => {
+	const repo = project();
+	try {
+		repo.commit("one");
+		const key = join(repo.root, ".git", "marram-gate.key");
+		writeFileSync(key, "0123abc");
+		assert.equal(repo.gate().status, 0);
+		assert.match(readFileSync(key, "utf8"), /^[0-9a-f]{64}$/);
+		assert.equal(repo.finish().status, 0, "the pass recorded with the new secret is reused");
+		assert.equal(repo.runs(), "d");
+
+		rmSync(key);
+		const state = new URL("../../src/core/gate-state.mjs", import.meta.url).href;
+		const make = `import { stageKeys } from ${JSON.stringify(state)};\nconsole.log(stageKeys(process.cwd(), {}, { create: true })([]));`;
+		const keys = await Promise.all([0, 1, 2, 3].map(() => new Promise((done) => {
+			const child = spawn(process.execPath, ["--input-type=module", "-e", make], { cwd: repo.root, stdio: ["ignore", "pipe", "inherit"] });
+			let output = "";
+			child.stdout.on("data", (chunk) => { output += chunk; });
+			child.on("exit", () => done(output.trim()));
+		})));
+		assert.equal(new Set(keys).size, 1, keys.join("\n"));
+		assert.match(keys[0], /^[0-9a-f]{64}$/);
+		assert.deepEqual(readdirSync(join(repo.root, ".git")).filter((name) => name.startsWith("marram-gate.key.")), [], "no staged secret is left");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("on Windows the secret is its owner's only", { skip: process.platform !== "win32" && "Windows permissions" }, () => {
+	const repo = project();
+	try {
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		const acl = execFileSync("icacls", [join(repo.root, ".git", "marram-gate.key")], { encoding: "utf8" });
+		assert.doesNotMatch(acl, /\(I\)/, `nothing inherited:\n${acl}`);
+		assert.match(acl, new RegExp(process.env.USERNAME, "i"));
+		assert.doesNotMatch(acl, /Everyone|BUILTIN\\Users|Authenticated Users/i, acl);
 	} finally {
 		repo.remove();
 	}

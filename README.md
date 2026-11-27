@@ -116,10 +116,24 @@ exec node "$(git rev-parse --show-toplevel)/node_modules/@raresportan/marram/bin
 
 A push needs the default gate unless `gate.prePush` is `"full"`, for a project with no CI behind the push. A full pass
 counts for the default gate too when it ran each default stage, in order, with the same command, arguments and `env`;
-other stages may come between them. The gate decides this from the configuration it ran with and keeps only the answer,
-not the commands or their environment. A default run afterwards doesn't replace it. A full tier that runs something
-else, such as `npm run gate:full` where the default runs `npm run gate`, doesn't answer for the default gate, which
-then runs.
+other stages may come between them. A default run afterwards doesn't replace it. A full tier that runs something else,
+such as `npm run gate:full` where the default runs `npm run gate`, doesn't answer for the default gate, which then runs.
+
+A pass counts only while the configuration gives the same stages: their commands, arguments and `env`. A configuration
+can build its stages from the environment, so the same code can need other stages, and then the gate runs again.
+
+Stages also inherit the gate's environment. An inherited variable counts only if `gate.env` names it, as in
+`env: ["CI", "NODE_ENV"]`: then a pass made with one value doesn't count for another. Other inherited variables don't
+count, because `PATH` and the variables a terminal or hook sets differ from run to run. Name each variable your checks
+read.
+
+Gates run on the same code with different stages keep a verdict each. The config is evaluated from the project's root,
+wherever a command runs.
+
+A verdict keeps a key for the stages it ran, not their commands or environment, which may hold secrets. The key is an
+HMAC under a secret kept in its own owner-only file, `marram-gate.key` in the git folder. On Windows, where a file's mode
+doesn't limit who reads it, its inherited permissions are removed with `icacls`. The gate reads its configuration once,
+from the project's root, and records its verdict for the stages it ran.
 
 ```sh
 # .githooks/commit-msg
@@ -294,7 +308,7 @@ changed in its guards since the merge base:
   added, reordered, or running different arguments, and where a removed stage still runs with the same arguments and
   `env`;
 - `env` changes, by variable name only, since a value may be a token;
-- `gate.prePush`;
+- `gate.prePush`, and the inherited variables `gate.env` stops or starts counting for reusing a pass;
 - the `package.json` scripts a stage runs, including through `-w` and, for npm, the `pre` and `post` scripts around
   them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
   unchanged command, or a script changed along with the stage's arguments, shows what now runs;

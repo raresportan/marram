@@ -176,6 +176,10 @@ function compareProject(before, now, project) {
 		if (kept.join("\0\0") !== keptNow.join("\0\0")) lines.push(`${tier}: order now ${keptNow.map((key) => current.get(key).name).join(", ")} (was ${kept.map((key) => old.get(key).name).join(", ")})`);
 	}
 	if (was.prePush !== is.prePush) lines.push(`prePush: ${was.prePush} → ${is.prePush}`);
+	// The inherited variables whose values decide whether a pass still counts: one no longer named stops doing so.
+	const [droppedEnv, addedEnv] = [was.env.filter((name) => !is.env.includes(name)), is.env.filter((name) => !was.env.includes(name))];
+	if (droppedEnv.length > 0) lines.push(`env: no longer counts ${droppedEnv.join(", ")} for reusing a pass`);
+	if (addedEnv.length > 0) lines.push(`env: now counts ${addedEnv.join(", ")} for reusing a pass`);
 	// How the copy the probes run in is prepared: what setup builds and what link shares decide what they exercise.
 	for (const setting of ["setup", "link", "timeoutMs"]) {
 		const [old, current] = [was.probes[setting], is.probes[setting]];
@@ -248,15 +252,16 @@ try {
 		expect: fault?.expect instanceof RegExp ? String(fault.expect) : JSON.stringify(fault?.expect),
 	}));
 	const { setup, link, timeoutMs } = config.probes ?? {};
-	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", faults, probes: { setup, link, timeoutMs } });
+	const env = Array.isArray(gate.env) ? [...new Set(gate.env.map(String))].sort() : [];
+	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", env, faults, probes: { setup, link, timeoutMs } });
 } catch (error) {
 	answer({ error: String(error?.message ?? error).split("\\n")[0] });
 }`;
 
-/** `{ tiers, prePush, faults, probes }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
+/** `{ tiers, prePush, env, faults, probes }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
 function gateIn(top, project, where) {
 	const folder = join(top, project);
-	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", faults: [], probes: {} };
+	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", env: [], faults: [], probes: {} };
 	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000, stdio: ["ignore", "ignore", "ignore", "pipe"] });
 	const answer = result.output?.[3] ? JSON.parse(result.output[3]) : { error: result.error?.message ?? "it exited without giving its gate" };
 	return answer.error === undefined ? answer : { error: `couldn't load ${CONFIG} ${where}: ${answer.error}` };
