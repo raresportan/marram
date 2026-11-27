@@ -4,6 +4,9 @@
 //     write finishes later (on macOS). Exits go through exitWhenWritten, which waits for them.
 //   - check: a pattern a project gives may have the g or y flag, and then test() and exec() start where its last match
 //     ended. A pattern the file didn't write is matched through pattern.mjs, which starts from the text's start.
+//   - state: a lifecycle kept in variables that callbacks set is a state machine nobody wrote down, with combinations
+//     no one meant and events no one handled. A function whose callbacks assign two or more of its variables keeps
+//     one; it goes in a table (machine.mjs), where every event has an outcome in every state.
 //   - shared: a file written in place can be read half written, and a removal can take what another run is using. A
 //     file goes through owned.mjs (writeWhole), and so does a run's folder (ownFolder) and a lock; anywhere else a
 //     write, rename or removal is listed below with why the place is this run's alone.
@@ -64,9 +67,42 @@ const FILE_CHANGES = new Set(["writeFileSync", "writeFile", "appendFileSync", "a
 const calleeName = (call) => (ts.isIdentifier(call.expression) ? call.expression.text : ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : undefined);
 const fileChanges = (source) => calls(source, (call) => FILE_CHANGES.has(calleeName(call)), (call) => `${calleeName(call)} in place`);
 
+const isFunction = (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node);
+/** A function two or more of whose `let` variables are assigned inside the functions it holds: state set by events. */
+function eventState(source) {
+	const sites = [];
+	const visit = (node) => {
+		if (isFunction(node) && node.body) {
+			const declared = new Map();
+			const collect = (inner) => {
+				if (inner !== node && isFunction(inner)) return;
+				if (ts.isVariableDeclarationList(inner) && (inner.flags & ts.NodeFlags.Let) !== 0) for (const { name } of inner.declarations) if (ts.isIdentifier(name)) declared.set(name.text, name);
+				ts.forEachChild(inner, collect);
+			};
+			ts.forEachChild(node.body, collect);
+			const setters = new Map([...declared.keys()].map((name) => [name, new Set()]));
+			// Plain assignment only, of a value that doesn't read the variable: `+=`, or `queue = queue.then(…)`, gathers (output,
+			// a count, writes in turn) rather than saying what state it's in.
+			const mentions = (inner, name) => (ts.isIdentifier(inner) && inner.text === name) || (ts.forEachChild(inner, (child) => mentions(child, name) || undefined) ?? false);
+			const assigns = (inner, callback) => {
+				const sets = ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(inner.left) && setters.has(inner.left.text);
+				if (callback !== undefined && sets && !mentions(inner.right, inner.left.text)) setters.get(inner.left.text).add(callback);
+				ts.forEachChild(inner, (child) => assigns(child, callback ?? (isFunction(child) ? child : undefined)));
+			};
+			ts.forEachChild(node.body, (child) => assigns(child, isFunction(child) ? child : undefined));
+			const set = [...setters].filter(([, callbacks]) => callbacks.size > 0).map(([name]) => name);
+			if (set.length >= 2) sites.push({ line: lineOf(source, declared.get(set[0])), what: `${set.join(", ")} are set by callbacks` });
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	return sites;
+}
+
 const rules = [
 	{ find: exits, owners: ["core/json-output.mjs"], allowed: {}, fix: "await exitWhenWritten (json-output.mjs), which exits once the output is written", stale: "no longer calls process.exit" },
 	{ find: patterns, owners: ["core/pattern.mjs"], allowed: {}, fix: "match it with matches or firstMatch (pattern.mjs), from the text's start", stale: "no longer matches a pattern it didn't write" },
+	{ find: eventState, owners: ["core/machine.mjs"], allowed: {}, fix: "keep the lifecycle in a state table (machine.mjs), where every event has an outcome in every state", stale: "no longer has state set by callbacks" },
 	{
 		find: fileChanges,
 		owners: ["core/owned.mjs"],
@@ -89,4 +125,4 @@ const problems = [
 	// bin has no listed sites: what's listed is src's.
 	...runRules({ root, folder: "packages/marram/bin", list, rules: rules.map((rule) => ({ ...rule, allowed: {} })), match }),
 ];
-await finish("rules", problems, "exits wait for the output, patterns a project gives match from the start, and files are written whole");
+await finish("rules", problems, "exits wait for the output, patterns a project gives match from the start, lifecycles are tables, and files are written whole");
