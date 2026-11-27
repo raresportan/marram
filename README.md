@@ -417,6 +417,11 @@ nothing to publish. `npm install` runs it, the gate runs it first, and `npm pack
 Only the compiled files are published, so a project on Marram runs it in plain Node and with any bundler. Tally imports
 the compiled files too, so after editing a `.ts` file outside the gate, build before running Tally.
 
+`node scripts/lint-cost.mjs [files…]` measures the ratchet lints on a corpus of 1000 and 5000 files (or the sizes
+given). It reports how long they take, how much of that is parsing the same files again, and the memory that keeping
+every parsed file would take. Use it to decide whether a runner that parses each file once is worth building. Its header
+has the last numbers: at most 0.6s saved per thousand files, so not yet.
+
 CI (`.github/workflows/gate.yml`) runs `npm run gate:full` on every pull request and on main, on Ubuntu under
 `xvfb-run` and on Windows, and keeps each platform's gate logs when it fails. On Windows, a command a stage, probe or
 replay setup names that's installed as a `.cmd` or `.bat` script, such as `npm`, runs through `cmd.exe`, since Node
