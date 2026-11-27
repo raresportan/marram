@@ -38,5 +38,20 @@ export declare function restrict(options: {
 	fix: string;
 	stale: string;
 }): string[];
+/** Where a rule's `find` is: the file's path from the folder (forward slashes), and every file's, to its whole path. */
+export interface Where {
+	readonly file: string;
+	readonly files: ReadonlyMap<string, string>;
+}
+/** A rule for runRules: a site with its own `key` counts on its own, the rest against the file. */
+export interface Rule {
+	readonly find: (source: SourceFile, where: Where) => readonly (Site & { readonly key?: string })[];
+	readonly owners?: readonly string[];
+	readonly allowed: Allowed;
+	readonly fix: string;
+	readonly stale: Stale;
+}
+/** Every rule over the files under `root`/`folder`, each file parsed once: the rules' problems, in order. */
+export declare function runRules(options: { root: string; folder: string; list: string; rules: readonly Rule[] }): string[];
 /** Prints the problems and fails, or prints `ok`. */
 export declare function finish(lint: string, problems: readonly string[], ok: string): void;

@@ -11,7 +11,7 @@
 import { isBuiltin } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import ts from "typescript";
-import { lineOf, parse, ratchet, sourceFiles } from "./ratchet.mjs";
+import { lineOf, parse, runRules } from "./ratchet.mjs";
 
 const posix = (path) => path.split(sep).join("/");
 
@@ -94,16 +94,21 @@ export function importsOf(...modules) {
  * against the ratchet list `allowed` (`{ "file -> import": reason }`, kept in `list`).
  */
 export function importBoundaries({ root, folder, layers, allowed = {}, list }) {
-	const base = resolve(root, folder);
-	const files = sourceFiles(base);
-	const sources = new Map(files.map((file) => [posix(relative(base, file)), file]));
-	const found = files.flatMap((file) => {
-		const source = parse(file);
-		const from = posix(relative(base, file));
-		return imports(source).flatMap((specifier) => {
-			const wrong = problem(from, specifier.text, layers, sources);
-			return wrong === undefined ? [] : [{ key: `${from} -> ${specifier.text}`, at: `${folder}/${from}:${lineOf(source, specifier)}`, what: wrong }];
-		});
-	});
-	return ratchet({ list, allowed, found, fix: "move the code to a layer that may have it", stale: "is no longer imported that way" });
+	return runRules({ root, folder, list, rules: [importBoundaryRule({ layers, allowed })] });
+}
+
+/**
+ * The import boundaries as a rule for runRules, run with the others over the same parse: each import a file may not
+ * have is a site of its own, listed in `allowed` as `"file -> import"`.
+ */
+export function importBoundaryRule({ layers, allowed = {} }) {
+	return {
+		allowed,
+		fix: "move the code to a layer that may have it",
+		stale: () => "is no longer imported that way",
+		find: (source, { file, files }) => imports(source).flatMap((specifier) => {
+			const wrong = problem(file, specifier.text, layers, files);
+			return wrong === undefined ? [] : [{ key: `${file} -> ${specifier.text}`, line: lineOf(source, specifier), what: wrong }];
+		}),
+	};
 }

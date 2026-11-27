@@ -262,6 +262,25 @@ To keep agents from leaving explanations in place of fixes, `@raresportan/marram
 It accepts doc comments on declarations outside a function's body (in a module, a class, an interface or an object), license
 headers and comments with a link. A `/** … */` comment on a statement or inside a function is flagged like any other.
 
+Each `restrict` walks and parses the folder again. With several rules over one folder, run them together with
+`runRules` from `@raresportan/marram/core/ratchet`, which parses each file once for all of them and lets its tree go
+before the next:
+
+```js
+runRules({
+	root, folder: "src", list: "scripts/rules.mjs",
+	rules: [
+		importBoundaryRule({ layers }),   // from core/boundaries
+		{ find: importsOf("fs"), owners: ["features/counter/host/store.ts"], allowed: {}, fix: "go through the store", stale: "no longer touches files" },
+		{ find: comments, allowed: {}, fix: "say it in the code", stale: "has no comments any more" },
+	],
+});
+```
+
+A rule takes what `restrict` takes. `find` also gets `{ file, files }`: the file's path from the folder, and every
+file's. A site it returns with a `key` of its own (`${file} ${setter}`, as Tally's effects rule does) is listed and
+counted on its own, rather than against its file.
+
 ### 6. The first journey
 
 A journey drives the built app as a user would:
