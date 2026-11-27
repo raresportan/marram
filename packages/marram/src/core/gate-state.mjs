@@ -100,8 +100,13 @@ export function updateState(cwd, change) {
 	});
 }
 
-/** One stage as the gate runs it: its command and arguments, and its environment in a fixed order. */
-export const stageText = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+/**
+ * One stage as the gate runs it: its command and arguments, its environment in a fixed order, and whether it runs
+ * together with the marked stages next to it. That last one counts: a full gate that runs a test alongside the build it
+ * reads passes on a build from before, so it can't answer for a default gate that runs them one after the other. Left
+ * out when unmarked, so a stage's key stays what it was.
+ */
+export const stageText = ({ run, env = {}, concurrent }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)), ...(concurrent === true ? ["concurrent"] : [])]);
 
 // The secret that stage keys are made with, in its own file beside the state and readable only by its owner: the state
 // holds keys, and with the secret beside them a reader could check guesses at a stage's low-entropy values.

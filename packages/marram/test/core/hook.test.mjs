@@ -127,6 +127,8 @@ test("a full pass counts for the default gate only when it ran the default stage
 		"a different stage": { default: [stage("t", { code: 1 })], full: [stage("b")] },
 		"the same stage with another environment": { default: [stage("d", { env: { MODE: "strict" } })], full: [stage("d"), stage("f")] },
 		"the default stages in another order": { default: [stage("d"), stage("f")], full: [stage("f"), stage("d")] },
+		// Run together, e's test could read d's build from before: the default gate runs e after d.
+		"the default stages run together": { default: [stage("d"), stage("e")], full: [{ ...stage("d"), concurrent: true }, { ...stage("e"), concurrent: true }] },
 	};
 	for (const [difference, tiers] of Object.entries(unlike)) {
 		const repo = project({ tiers: { fast: [], ...tiers } });
