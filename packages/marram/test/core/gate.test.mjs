@@ -2,12 +2,14 @@
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pruneLogs } from "../../src/core/gate.mjs";
+
+const GATE = new URL("../../src/core/gate.mjs", import.meta.url).href;
 
 const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const GAP_MS = 2500;
@@ -167,6 +169,53 @@ test("a run still going keeps its folder while another gate prunes, and one whos
 		assert.ok(!existsSync(join(logs, firstRun)), "a run whose gate is gone is pruned");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("gates starting in the same millisecond get folders of their own, and a folder a dead gate was making is pruned", async () => {
+	const logs = mkdtempSync(join(tmpdir(), "marram-same-ms-"));
+	try {
+		const start = `import { startRun } from ${JSON.stringify(GATE)};\nconsole.log(await startRun(process.argv[1], "fast", new Date("2026-11-27T08:00:00.000Z")));`;
+		const runs = await Promise.all([0, 1].map(() => new Promise((done) => {
+			const child = spawn(process.execPath, ["--input-type=module", "-e", start, logs], { stdio: ["ignore", "pipe", "pipe"] });
+			let output = "";
+			child.stdout.on("data", (chunk) => { output += chunk; });
+			child.stderr.on("data", (chunk) => { output += chunk; });
+			child.on("exit", (code) => done({ code, output }));
+		})));
+		for (const run of runs) assert.equal(run.code, 0, run.output);
+		const made = readdirSync(logs).sort();
+		assert.equal(made.length, 2, made.join(", "));
+		for (const name of made) assert.match(name, /^gate-fast-2026-11-27T08-00-00-000Z-\d+$/);
+
+		const dead = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+		const abandoned = `.gate-full-2026-11-27T09-00-00-000Z-${dead}`;
+		const making = `.gate-full-2026-11-27T09-00-00-000Z-${process.pid}`;
+		mkdirSync(join(logs, abandoned));
+		mkdirSync(join(logs, making));
+		await pruneLogs(logs, 20);
+		assert.ok(!existsSync(join(logs, abandoned)), "a dead gate's half-made folder goes");
+		assert.ok(existsSync(join(logs, making)), "a live gate's folder in the making stays");
+	} finally {
+		rmSync(logs, { recursive: true, force: true });
+	}
+});
+
+// Unreadable files are a POSIX permission, which root ignores and Windows doesn't map.
+const UNREADABLE = { skip: (process.platform === "win32" || process.getuid?.() === 0) && "needs a file its owner can't read" };
+
+test("a run whose marker can't be read may still be going, so it's kept", UNREADABLE, async () => {
+	const logs = mkdtempSync(join(tmpdir(), "marram-unreadable-"));
+	const run = join(logs, "gate-default-2020-01-01T00-00-00-000Z");
+	try {
+		mkdirSync(run);
+		writeFileSync(join(run, "running"), String(process.pid));
+		chmodSync(join(run, "running"), 0o000);
+		await pruneLogs(logs, 0);
+		assert.ok(existsSync(run), "kept: whether its gate is running isn't known");
+	} finally {
+		if (existsSync(run)) chmodSync(join(run, "running"), 0o644);
+		rmSync(logs, { recursive: true, force: true });
 	}
 });
 

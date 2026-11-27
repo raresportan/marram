@@ -4,7 +4,7 @@
 //   (default) Minutes: before a task counts as done.
 //   full      The default gate and more (a build, the slow journeys). Before merging UI work, or nightly.
 // What each tier runs is the project's: `gate.tiers` in marram.config.mjs. Stages run in order and the first failure
-// stops the gate. Each stage's output is kept in its own log under `gate.logs`/gate-<tier>-<time>/, with report.json;
+// stops the gate. Each stage's output is kept in its own log under `gate.logs`/gate-<tier>-<time>-<pid>/, with report.json;
 // the newest `gate.keep` runs' folders are kept, 20 unless set, and a run still going is never removed.
 // A stage that fails after the machine slept during it runs again: timeouts ran out and frames stopped while it slept,
 // so that failure says nothing about the code. A pause counts as sleep past `gate.sleepGapMs`, 30 seconds by default.
@@ -18,7 +18,11 @@ import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const TIERS = ["fast", "default", "full"];
-const RUN = /^gate-(?:fast|default|full)-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)$/;
+// A run's folder: its tier, when it started, and its gate's process id, so two gates starting in the same millisecond
+// don't share one. Folders from before the id was added match too, so they're still pruned.
+const RUN = /^gate-(?:fast|default|full)-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)(?:-\d+)?$/;
+// A run's folder while it's being made (see startRun), named for the gate making it.
+const STARTING = /^\.gate-(?:fast|default|full)-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z-(\d+)$/;
 
 // A run's folder holds this while its gate runs: the gate's process id, so pruning leaves the folder of a run that's
 // still going (another gate, in another terminal or hook) and takes one whose gate is gone.
@@ -34,37 +38,59 @@ function alive(pid) {
 	}
 }
 
-/** Whether the run in `folder` is still going: its marker names a process that's running. */
+/**
+ * Whether the run in `folder` may still be going: its marker names a process that's running, or the marker is there but
+ * can't be read (EACCES, say), so whether it's going isn't known. Only a missing or malformed marker says it's over.
+ */
 async function stillGoing(folder) {
-	const pid = Number(await readFile(join(folder, RUNNING), "utf8").catch(() => ""));
+	let text;
+	try {
+		text = await readFile(join(folder, RUNNING), "utf8");
+	} catch (error) {
+		return error.code !== "ENOENT";
+	}
+	const pid = Number(text);
 	return Number.isSafeInteger(pid) && pid > 0 && alive(pid);
 }
 
 /**
- * Removes all but the newest `keep` of the gate's run folders in `logs`, whatever their tier, except a run still going.
- * Only the gate's own folders (gate-<tier>-<time>) are touched: anything else a project keeps there stays.
+ * Removes all but the newest `keep` of the gate's run folders in `logs`, whatever their tier, except a run that may still
+ * be going; and a folder a gate was making when it died. Only the gate's own folders (gate-<tier>-<time>, and
+ * .gate-<tier>-<time>-<pid> while one is made) are touched: anything else a project keeps there stays.
  */
 export async function pruneLogs(logs, keep) {
-	const runs = (await readdir(logs, { withFileTypes: true }).catch(() => []))
-		.filter((entry) => entry.isDirectory() && RUN.test(entry.name))
+	const entries = (await readdir(logs, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory());
+	const runs = entries
+		.filter((entry) => RUN.test(entry.name))
 		.map((entry) => ({ name: entry.name, time: RUN.exec(entry.name)[1] }))
-		.sort((a, b) => b.time.localeCompare(a.time));
-	await Promise.all(runs.slice(keep).map(async ({ name }) => {
-		const folder = join(logs, name);
-		if (!(await stillGoing(folder))) await rm(folder, { recursive: true, force: true });
-	}));
+		.sort((a, b) => b.time.localeCompare(a.time) || b.name.localeCompare(a.name));
+	const abandoned = entries.filter((entry) => STARTING.test(entry.name) && !alive(Number(STARTING.exec(entry.name)[1])));
+	await Promise.all([
+		...runs.slice(keep).map(async ({ name }) => {
+			const folder = join(logs, name);
+			if (!(await stillGoing(folder))) await rm(folder, { recursive: true, force: true });
+		}),
+		...abandoned.map((entry) => rm(join(logs, entry.name), { recursive: true, force: true })),
+	]);
 }
 
 /**
- * A new run's folder, `name` in `logs`, marked as this process's while it runs. It's made under a name pruning doesn't
- * touch and renamed once marked, so another gate pruning at that moment can't take it unmarked.
+ * A new run's folder in `logs`, for `tier`, started at `date`, marked as this process's while it runs. It's made under a
+ * name pruning keeps clear of while this process lives, and renamed once marked, so another gate pruning at that moment
+ * can't take it unmarked. If that fails, what was made goes.
  */
-export async function startRun(logs, name) {
-	const starting = join(logs, `.${name}-${process.pid}`);
-	await mkdir(starting, { recursive: true });
-	await writeFile(join(starting, RUNNING), String(process.pid));
+export async function startRun(logs, tier, date = new Date()) {
+	const name = `gate-${tier}-${date.toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
+	const starting = join(logs, `.${name}`);
 	const dir = join(logs, name);
-	await rename(starting, dir);
+	try {
+		await mkdir(starting, { recursive: true });
+		await writeFile(join(starting, RUNNING), String(process.pid));
+		await rename(starting, dir);
+	} catch (error) {
+		await rm(starting, { recursive: true, force: true });
+		throw error;
+	}
 	// However the gate ends (a pass, a failure's exit, an interruption), the run is no longer going.
 	process.once("exit", () => rmSync(join(dir, RUNNING), { force: true }));
 	return dir;
@@ -94,7 +120,7 @@ export async function gate(root, config, [tier = "default"]) {
 		console.error(`marram.config.mjs has no gate.tiers.${tier}: a list of stages.`);
 		process.exit(1);
 	}
-	const dir = await startRun(join(root, logs), `gate-${tier}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+	const dir = await startRun(join(root, logs), tier);
 	await pruneLogs(join(root, logs), keep);
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
 

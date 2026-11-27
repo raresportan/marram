@@ -101,7 +101,7 @@ is kept in its own log. On failure the terminal shows up to 60 lines starting at
 nothing about the code.
 
 Logs go in `gate.logs`, `.verify` unless set, one folder per run. The newest 20 runs are kept and older ones removed;
-`gate.keep` sets how many (`Infinity` keeps them all). Only the gate's own `gate-<tier>-<time>` folders are removed,
+`gate.keep` sets how many (`Infinity` keeps them all). Only the gate's own `gate-<tier>-<time>-<pid>` folders are removed,
 and never one whose gate is still running, such as a long gate in another terminal or hook.
 
 Every command checks the whole config when it loads it. A misspelled key (`gate.tiers.defualt`, with the key it's likely
