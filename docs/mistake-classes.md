@@ -13,11 +13,13 @@ finding either strengthens a rung or shows that one is missing.
 | **lifetime**: a process taken as done before it is | A command counted as finished when it exits, while a process it started still holds its output; a process that exits before what it wrote has reached a slow reader | lint: `scripts/rules.mjs` allows `process.exit` only in `exitWhenWritten`; check: CI's full gate on macOS, where the slow-pipe tests fail; unit: `bounded.test.mjs`, the slow-pipe tests |
 | **shared**: a place written to as if no one else used it | Two runs, builds or probes in one folder; a folder named by the time alone; a gate's logs pruned while it runs; a hook written into a folder other repositories or worktrees use | architecture: `owned.mjs` gives a run its own folder, writes a file whole, removes only what's done and takes a lock only from a holder that's gone; lint: `scripts/rules.mjs` lists every other write, rename or removal with why its place is the run's alone; unit: `owned.test.mjs`, `probe.test.mjs`, `build.test.mjs`, the overlapping-gate tests |
 | **attribution**: a verdict right for the wrong reason | A probe reports a fault caught because its check failed on something else; replay takes a base that failed for another reason as proof | check: a probe counts a fault caught only if its check passes again without it; unit: `probe.test.mjs`, `replay.test.mjs` |
+| **state**: a state machine nobody wrote down | A lifecycle kept in flags that callbacks set: some combination no one meant can happen, and some event in some state has no outcome anyone chose (a second report, a timeout that no longer covers what's left) | architecture: `machine.mjs`, a table with every event's outcome in every state; unit: `machine.test.mjs` goes through the table's pairs and checks the timers alone end it; lint: `scripts/rules.mjs` flags a function whose callbacks set two or more of its variables |
 | **leak**: a value kept where it outlives its use | A stage's command or `env`, which may hold a token, written to state, a command line or a token a pull request's code can read | unit: tests that read the state a command writes for a known value; check: zizmor over the workflows in CI |
 | **platform**: code that assumes one operating system | A path compared in one spelling or with one separator, a command started as one platform starts it, a signal or rename only POSIX has | check: CI's full gate on Linux, Windows and macOS; unit: tests that give the other platform's paths or a fake of its environment |
 
 `check` is only a check that can't fail or that flakes. A tool that judges wrongly is in the class for how it does: a
-wrong key, a change it can't see, a process it stops waiting for, a place it shares, or a cause it gets wrong.
+wrong key, a change it can't see, a process it stops waiting for, a place it shares, a cause it gets wrong, or an event
+it never decided about.
 
 ## Naming a fix
 
