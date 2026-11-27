@@ -12,14 +12,15 @@
 //
 // Measured on a Mac in November 2026: at 1000 files (84k lines) the five passes took 1.2s and parse-once could save
 // 0.6s; at 5000 files (420k lines), 6.5s and 3.1s, with 330MB to keep every tree (755MB after comments). So a runner
-// worth building parses a file, runs every finder on it, and lets it go, rather than caching trees.
+// worth building parses a file, runs every finder on it, and lets it go, rather than caching trees: runRules, in
+// ratchet.mjs, which this times too, the five rules in one pass: 0.5s at 1000 files, where the five passes took 1.1s.
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { importBoundaries, importsOf } from "../packages/marram/src/core/boundaries.mjs";
+import { importBoundaries, importBoundaryRule, importsOf } from "../packages/marram/src/core/boundaries.mjs";
 import { comments } from "../packages/marram/src/core/no-comments.mjs";
-import { parse, ratchet, restrict, sourceFiles } from "../packages/marram/src/core/ratchet.mjs";
+import { parse, ratchet, restrict, runRules, sourceFiles } from "../packages/marram/src/core/ratchet.mjs";
 import { lintPromises } from "../packages/marram/src/node/promise-lint.mjs";
 import { acquisitions } from "../packages/marram/src/node/resource-lint.mjs";
 import { effectSets } from "../packages/marram/src/react/effect-lint.mjs";
@@ -83,6 +84,9 @@ function measure(pool, count) {
 			importBoundaries: time(() => importBoundaries({ root, folder: "src", layers: { "features/*/client": { may: [] } }, list })),
 		};
 		const once = time(() => files.map(parse));
+		const rule = (find) => ({ find, allowed: {}, fix: "-", stale: "-" });
+		const effectRule = rule((source, { file }) => effectSets(source).map(({ line }) => ({ key: file, line, what: "-" })));
+		const together = time(() => runRules({ root, folder: "src", list, rules: [importBoundaryRule({ layers: { "features/*/client": { may: [] } } }), rule(importsOf("fs")), rule(acquisitions), rule(comments), effectRule] }));
 		const total = Object.values(passes).reduce((sum, ms) => sum + ms, 0);
 		return {
 			files: count,
@@ -98,6 +102,7 @@ function measure(pool, count) {
 			"the five passes (ms)": passes,
 			"the five passes, total (ms)": total,
 			"parse-once could save at most (ms)": (Object.keys(passes).length - 1) * once,
+			"runRules, the five in one pass (ms)": together,
 			"lintPromises (ms)": time(() => lintPromises({ root, projects: [{ config: "tsconfig.json", folder: "src" }] }), 1),
 		};
 	} finally {

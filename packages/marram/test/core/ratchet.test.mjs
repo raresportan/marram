@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import ts from "typescript";
-import { lineOf, ratchet, restrict } from "../../src/core/ratchet.mjs";
+import { lineOf, ratchet, restrict, runRules } from "../../src/core/ratchet.mjs";
 
 const rule = (allowed, found) => ratchet({ list: "lint.mjs", allowed, found, fix: "use the owner", stale: () => "no longer does it" });
 const site = (key) => ({ key, at: `${key}:1`, what: "does it" });
@@ -86,6 +86,45 @@ test("a counted file allowance tracks individual finder matches", () => {
 			assert.match(run(3, { ...entry, count })[0], /positive integer/);
 		}
 		assert.deepEqual(run(4, "file-level exception"), []);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("runRules parses each file once for every rule, and judges each rule's sites against its own list", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-rules-"));
+	try {
+		mkdirSync(join(root, "src", "deep"), { recursive: true });
+		writeFileSync(join(root, "src", "owner.ts"), "danger();\n");
+		writeFileSync(join(root, "src", "a.ts"), "danger();\nconst [v, setV] = s();\n");
+		writeFileSync(join(root, "src", "deep", "b.tsx"), "setW(1);\n");
+		const calls = (name) => (source) => source.statements.flatMap((node) => (node.getText(source).startsWith(name) ? [{ line: lineOf(source, node), what: `calls ${name}` }] : []));
+		const seen = new Map();
+		const remember = (rule) => ({ ...rule, find: (source, where) => {
+			seen.set(where.file, [...(seen.get(where.file) ?? []), source]);
+			return rule.find(source, where);
+		} });
+		const rules = [
+			remember({ find: calls("danger"), owners: ["owner.ts"], allowed: { "gone.ts": "why" }, fix: "call it from owner.ts", stale: "no longer calls danger" }),
+			// Sites with keys of their own, as the effects ratchet lists `file setter`.
+			remember({
+				find: (source, { file, files }) => {
+					assert.ok(files.has("deep/b.tsx") && files.get(file).endsWith(file.split("/").join(process.platform === "win32" ? "\\" : "/")));
+					return calls("setW")(source).map((found) => ({ ...found, key: `${file} setW` }));
+				},
+				allowed: { "a.ts setW": "why" },
+				fix: "derive it",
+				stale: "no longer sets it",
+			}),
+		];
+		assert.deepEqual(runRules({ root, folder: "src", list: "rules.mjs", rules }), [
+			"src/a.ts:1 calls danger: call it from owner.ts, or list it in rules.mjs with why",
+			"gone.ts is gone: remove it from rules.mjs",
+			"src/deep/b.tsx:1 calls setW: derive it, or list it in rules.mjs with why",
+			"a.ts setW no longer sets it: remove it from rules.mjs",
+		]);
+		// Each file was parsed once: both rules saw the same tree. The owner was parsed, and skipped by its rule only.
+		for (const [file, sources] of seen) assert.ok(sources.length === (file === "owner.ts" ? 1 : 2) && sources.every((source) => source === sources[0]), file);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

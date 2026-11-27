@@ -7,7 +7,8 @@
 //       progress: /lines from a stage worth showing as it runs/,   // besides ✓ and ✗ lines
 //       sleepGapMs: 30000,   // how long a pause counts as the machine sleeping, so a stage that failed runs again
 //       env: ["CI"],   // inherited variables whose values decide whether a verdict still counts (gate-state.mjs)
-//       tiers: { fast: [stage, …], default: [stage, …], full: [stage, …] },  // stage: { name, run: [command, …args], env? }
+//       tiers: { fast: [stage, …], default: [stage, …], full: [stage, …] },  // stage: { name, run: [command, …args], env?, concurrent? }
+//       // concurrent: true runs a stage alongside the stages next to it that are marked too, rather than after them
 //       prePush: "full",   // the gate a push must pass (marram hook pre-push): "default" unless set
 //     },
 //     probes: { … },   // see probe.mjs
@@ -103,9 +104,10 @@ function unknownKeys(object, path, known) {
 
 /** What's wrong with a stage of a tier. */
 function stageProblems(stage, label) {
-	if (!isObject(stage)) return [`${label} must be a stage: { name, run: [command, …args], env? }`];
+	if (!isObject(stage)) return [`${label} must be a stage: { name, run: [command, …args], env?, concurrent? }`];
 	return [
-		...unknownKeys(stage, label, ["name", "run", "env"]),
+		...unknownKeys(stage, label, ["name", "run", "env", "concurrent"]),
+		...(stage.concurrent !== undefined && typeof stage.concurrent !== "boolean" ? [`${label}.concurrent must be true or false`] : []),
 		...(!isText(stage.name) || /[\\/]/.test(stage.name) ? [`${label}.name must be a name, without / or \\: its log is <name>.log`] : []),
 		...(!isCommand(stage.run) ? [`${label}.run must be a command and its arguments, as in ["npm", "test"]`] : []),
 		...(stage.env !== undefined && !(isObject(stage.env) && Object.values(stage.env).every((value) => typeof value === "string"))

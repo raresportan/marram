@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
+import { jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
 // A run's folder: its tier, when it started, and its gate's process id, so two gates starting in the same millisecond
@@ -109,9 +110,25 @@ function ranDefault(tiers) {
 	return found === wanted.length;
 }
 
-export async function gate(root, config, [tier = "default"]) {
+/**
+ * `stages` in the groups they run in: each stage alone, in order, but consecutive ones marked `concurrent` together. A
+ * stage runs once the groups before it finished, so one that needs another's output (a typecheck after a build) stays
+ * after it, unmarked.
+ */
+export function groups(stages) {
+	const found = [];
+	for (const stage of stages) {
+		if (stage.concurrent === true && found.at(-1)?.[0].concurrent === true) found.at(-1).push(stage);
+		else found.push([stage]);
+	}
+	return found;
+}
+
+export async function gate(root, config, given) {
+	const { json, args, say } = jsonOption(given);
+	const [tier = "default"] = args;
 	if (!TIERS.includes(tier)) {
-		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full]`);
+		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full] [--json]`);
 		process.exit(1);
 	}
 	const { logs = ".verify", keep = 20, progress, tiers, sleepGapMs = 30_000 } = config.gate ?? {};
@@ -122,19 +139,22 @@ export async function gate(root, config, [tier = "default"]) {
 	const dir = await startRun(join(root, logs), tier);
 	await pruneLogs(join(root, logs), keep);
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
+	// One write at a time: stages running together finish together, and two writes of one file at once can interleave.
+	let saving = Promise.resolve();
+	const saveReport = () => (saving = saving.then(() => writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2))));
 
 	// A git hook (pre-push) runs with GIT_DIR and the like pointing at this repository; checks that make their own scratch
 	// repositories would act on this one instead.
 	const outsideGit = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
 
-	// Interrupted (Ctrl-C, a hook's timeout), the gate passes the signal to the stage it runs, so a check runner can stop
+	// Interrupted (Ctrl-C, a hook's timeout), the gate passes the signal to the stages it runs, so a check runner can stop
 	// what it started, and records no verdict: an interrupted gate says nothing about the code.
-	let running;
+	const running = new Set();
 	let interrupted = false;
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 		process.once(signal, () => {
 			interrupted = true;
-			running?.kill(signal);
+			for (const child of running) child.kill(signal);
 		});
 	}
 
@@ -144,12 +164,12 @@ export async function gate(root, config, [tier = "default"]) {
 		const stageEnv = { ...outsideGit, ...env };
 		const run = spawnable(command, args, { cwd: root, env: stageEnv });
 		const child = spawn(run.file, run.args, { ...run.options, cwd: root, env: stageEnv, stdio: ["ignore", "pipe", "pipe"] });
-		running = child;
+		running.add(child);
 		child.stdout.pipe(log, { end: false });
 		child.stderr.pipe(log, { end: false });
 		// Progress lines (a check's ✓ or ✗, and what the project's `progress` matches); everything else stays in the log.
 		child.stdout.on("data", (chunk) => {
-			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) console.log(`  ${name}: ${line.trim()}`);
+			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) say(`  ${name}: ${line.trim()}`);
 		});
 		let last = Date.now();
 		let slept = 0;
@@ -163,13 +183,14 @@ export async function gate(root, config, [tier = "default"]) {
 			child.on("error", (error) => log.write(error.message + "\n"));
 			child.on("close", (exit) => done(exit ?? 1));
 		});
+		running.delete(child);
 		clearInterval(clock);
 		noticeSleep();
 		await new Promise((done) => log.end(done));
 		const seconds = Math.round((Date.now() - started) / 1000);
 		report.stages.push({ name, code, seconds });
-		await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
-		console.log(`${code === 0 ? "✓" : "✗"} ${name} (${seconds}s)${code === 0 ? "" : `: see ${join(dir, `${name}.log`)}`}`);
+		await saveReport();
+		say(`${code === 0 ? "✓" : "✗"} ${name} (${seconds}s)${code === 0 ? "" : `: see ${join(dir, `${name}.log`)}`}`);
 		return { passed: code === 0, slept };
 	}
 
@@ -187,31 +208,45 @@ export async function gate(root, config, [tier = "default"]) {
 		updateState(root, (state) => { state.trees[verdictKey(project, tier, stages)] = { passed, tier, stages, at: Date.now(), ...extra, ...covers }; });
 	};
 
-	console.log(`Gate (${tier}). Logs: ${dir}`);
-	for (const stage of tiers[tier]) {
+	/** Run `stage`, and again while it failed with the machine asleep during it: whether it passed in the end. */
+	async function settle(stage) {
 		let { passed, slept } = await runStage(stage);
 		while (!passed && slept > 0 && !interrupted) {
-			console.log(`  The machine slept for ${Math.round(slept / 1000)}s during ${stage.name}, so its failure says nothing about the code. Running it again.`);
+			say(`  The machine slept for ${Math.round(slept / 1000)}s during ${stage.name}, so its failure says nothing about the code. Running it again.`);
 			await rename(join(dir, `${stage.name}.log`), join(dir, `${stage.name}-slept.log`));
 			({ passed, slept } = await runStage(stage));
 		}
+		return passed;
+	}
+
+	const began = Date.now();
+	/** With --json, the run's report and how it ended, as the command's result. */
+	const result = (ended) => json && printJson({ ...report, logs: dir, ...ended });
+	say(`Gate (${tier}). Logs: ${dir}`);
+	for (const group of groups(tiers[tier])) {
+		// A group's stages all run to the end, so each has its log, and the gate fails at the first of them that failed.
+		const results = await Promise.all(group.map(settle));
 		if (interrupted) {
-			console.log(`\nGate interrupted at ${stage.name}.`);
+			say(`\nGate interrupted at ${group.map((stage) => stage.name).join(", ")}.`);
+			result({ interrupted: true });
 			process.exit(1);
 		}
-		if (!passed) {
-			const log = join(dir, `${stage.name}.log`);
-			verdict(false, { stage: stage.name, log });
-			console.log(`\nGate failed at ${stage.name}.`);
+		const failed = group.find((_, i) => !results[i]);
+		if (failed !== undefined) {
+			const log = join(dir, `${failed.name}.log`);
+			verdict(false, { stage: failed.name, log });
+			say(`\nGate failed at ${failed.name}.`);
 			const excerpt = failureExcerpt(log);
-			if (excerpt) console.log(excerpt);
+			if (excerpt) say(excerpt);
+			result({ failedAt: failed.name, log, excerpt });
 			process.exit(1);
 		}
 	}
 	report.passed = true;
 	report.completedAt = new Date().toISOString();
-	await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
+	await saveReport();
 	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
 	if (tree !== undefined && treeOf(root) === tree) verdict(true);
-	console.log(`\nGate passed (${report.stages.reduce((total, stage) => total + stage.seconds, 0)}s).`);
+	say(`\nGate passed (${Math.round((Date.now() - began) / 1000)}s).`);
+	result({ seconds: Math.round((Date.now() - began) / 1000) });
 }

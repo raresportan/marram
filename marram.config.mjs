@@ -1,7 +1,12 @@
 // What Marram's own gate runs. Tally, the example, is a second project on these packages: its gate is part of this one.
 const npm = (name, ...args) => ({ name, run: ["npm", ...args] });
-// The package's TypeScript is compiled first: Tally, like any project on it, imports what it publishes.
-const fast = [npm("build", "run", "build", "-w", "@raresportan/marram"), npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }];
+// The package's TypeScript is compiled first: Tally, like any project on it, imports what it publishes. What reads it
+// then runs together.
+const together = (stage) => ({ ...stage, concurrent: true });
+const fast = [
+	npm("build", "run", "build", "-w", "@raresportan/marram"),
+	...[npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }].map(together),
+];
 const tally = (tier) => ({ name: "tally", run: ["npm", "run", tier, "-w", "tally"] });
 
 export default {

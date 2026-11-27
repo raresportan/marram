@@ -362,6 +362,22 @@ test("a workspace taken out of (or put into) package.json's workspaces, under th
 	}
 });
 
+test("with --json, guard-diff's sections are JSON", () => {
+	const repo = repository();
+	try {
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, prePush: "default" }));
+		const result = repo.diff("--json");
+		assert.equal(result.status, 0, result.stderr);
+		const report = JSON.parse(result.stdout);
+		assert.equal(report.base, "main");
+		assert.match(report.mergeBase, /^[0-9a-f]{40}$/);
+		assert.deepEqual(report.sections, [{ title: "(root)", lines: ["prePush: full → default"] }]);
+		assert.match(report.notCompared, /^Not compared: /);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a configuration that prints while it loads is still read", () => {
 	const repo = repository();
 	try {

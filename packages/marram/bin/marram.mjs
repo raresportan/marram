@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Usage:
 //   marram gate [fast | full]                  run the project's gate (src/gate.mjs)
+//   (gate, probe, guard-diff and review-summary take --json: their result as JSON on stdout, what they say on stderr)
 //   marram hook <mode>                         the gate where work is declared done (src/hook.mjs)
 //   marram commit-lint <message file>          a review fix names each finding's class and rung (src/commit-lint.mjs)
 //   marram commit-lint --range <from>..<to>
@@ -33,7 +34,7 @@ if (command === "init" || command === "doctor") {
 	process.exit(0);
 }
 if (!(command in commands)) {
-	console.error("Usage: marram init | marram doctor | marram probe [fault]… | marram guard-diff <base> [--map <map>]… | marram replay <base> <test-file> <test-name> <expected assertion message> | marram replay <base> <test-file> --expect <text> -- <command>… | marram map-diff <base> <map> | marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>]");
+	console.error("Usage: marram init | marram doctor | marram probe [fault]… | marram guard-diff <base> [--map <map>]… | marram replay <base> <test-file> <test-name> <expected assertion message> | marram replay <base> <test-file> --expect <text> -- <command>… | marram map-diff <base> <map> | marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>] (gate, probe, guard-diff and review-summary take --json)");
 	process.exit(1);
 }
 // A config with problems is reported as what to fix, not as a crash.

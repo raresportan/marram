@@ -102,6 +102,12 @@ is kept in its own log. On failure the terminal shows up to 60 lines starting at
 60 lines when the log has no marker. A stage that fails after the machine slept during it runs again, because that failure says
 nothing about the code.
 
+Stages that don't depend on each other can run at the same time: mark each with `concurrent: true`, as in
+`{ ...npm("rules", "run", "rules"), concurrent: true }`. Consecutive marked stages run together, and the next stage
+starts once they've all finished, so leave a stage that needs another's output (a typecheck after a build) unmarked,
+after it. In a group, every stage runs to the end and the gate fails at the first of them, in order, that failed.
+Running stages together doesn't change what a pass covers.
+
 Logs go in `gate.logs`, `.verify` unless set, one folder per run. The newest 20 runs are kept and older ones removed;
 `gate.keep` sets how many (`Infinity` keeps them all). Only the gate's own `gate-<tier>-<time>-<pid>` folders are removed,
 and never one whose gate is still running, such as a long gate in another terminal or hook.
@@ -255,6 +261,25 @@ Add `acquisitions`, `effectSets` and `lintPromises` from its `node` and `react` 
 To keep agents from leaving explanations in place of fixes, `@raresportan/marram/core/no-comments` is a finder for the same rule.
 It accepts doc comments on declarations outside a function's body (in a module, a class, an interface or an object), license
 headers and comments with a link. A `/** … */` comment on a statement or inside a function is flagged like any other.
+
+Each `restrict` walks and parses the folder again. With several rules over one folder, run them together with
+`runRules` from `@raresportan/marram/core/ratchet`, which parses each file once for all of them and lets its tree go
+before the next:
+
+```js
+runRules({
+	root, folder: "src", list: "scripts/rules.mjs",
+	rules: [
+		importBoundaryRule({ layers }),   // from core/boundaries
+		{ find: importsOf("fs"), owners: ["features/counter/host/store.ts"], allowed: {}, fix: "go through the store", stale: "no longer touches files" },
+		{ find: comments, allowed: {}, fix: "say it in the code", stale: "has no comments any more" },
+	],
+});
+```
+
+A rule takes what `restrict` takes. `find` also gets `{ file, files }`: the file's path from the folder, and every
+file's. A site it returns with a `key` of its own (`${file} ${setter}`, as Tally's effects rule does) is listed and
+counted on its own, rather than against its file.
 
 ### 6. The first journey
 
@@ -428,6 +453,15 @@ link in it or one level below, as scoped packages do. Links nested deeper still 
 Marram probes three of its own guards this way, in the full gate: a shared cache verdict across nested projects, a
 missing IPC handler, and a restart check left in an uncalled helper. The patches are in `probes/`. They need the same
 Electron environment as Tally's journeys. Each command gets five minutes; set `PROBE_TIMEOUT_MS` to change that.
+
+### JSON for CI
+
+`marram gate`, `marram probe`, `marram guard-diff` and `marram review-summary` take `--json`: the result goes to stdout
+as one JSON document, and what the command says as it runs goes to stderr. The gate gives its run's report (each stage's
+exit code and seconds, its logs folder) with `passed`, and on failure `failedAt`, `log` and the `excerpt` it showed.
+Probe gives each fault's `state` (`caught`, `missed` or `inconclusive`), `detail` and `ms`. guard-diff gives the merge
+base and its `sections`, each a `title` and its `lines`. review-summary gives each class's findings by rung, with their
+commits. `marram replay` always prints JSON. Exit codes are the same with or without `--json`.
 
 ## Credit
 
