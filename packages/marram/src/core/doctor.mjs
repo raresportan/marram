@@ -12,7 +12,8 @@ import { classesIn } from "./commit-lint.mjs";
 import { locate } from "./command.mjs";
 import { findRoot, problems } from "./config.mjs";
 
-const INSTALLED = "node_modules/@raresportan/marram/bin/marram.mjs";
+// The Marram a hook runs, named from the repository's top as init writes it: node_modules/… or app/node_modules/….
+const INSTALLED = /\$\(git rev-parse --show-toplevel\)\/([^\s"'`$]*node_modules\/@raresportan\/marram\/bin\/marram\.mjs)/g;
 
 /** `git args` from `cwd`, trimmed, or undefined when git fails. */
 function git(cwd, ...args) {
@@ -91,22 +92,35 @@ export async function diagnose(from = process.cwd()) {
 	const named = git(top, "rev-parse", "--git-path", "hooks");
 	const hooks = resolve(top, named);
 	const shown = named.split("\\").join("/");
-	/** The text of the hook `name`, checked to exist, run, and reach an installed Marram; undefined if it can't. */
+	/**
+	 * The hook `name`: its text, or undefined when there's none; and whether it can run, as git runs it and with the
+	 * Marram it names (a path from the repository's top, such as app/node_modules/…) installed.
+	 */
 	const hook = (name) => {
 		const file = join(hooks, name);
-		if (!existsSync(file)) return undefined;
+		if (!existsSync(file)) return { text: undefined, sound: false };
 		const text = readFileSync(file, "utf8");
-		if (!runnable(file)) problem(`${shown}/${name} isn't executable, so git skips it: \`chmod +x ${shown}/${name}\``);
-		if (text.includes(INSTALLED) && !existsSync(join(top, INSTALLED))) problem(`${shown}/${name} runs ${INSTALLED}, which isn't installed: \`npm install\``);
-		return text;
+		let sound = true;
+		if (!runnable(file)) {
+			problem(`${shown}/${name} isn't executable, so git skips it: \`chmod +x ${shown}/${name}\``);
+			sound = false;
+		}
+		for (const [, path] of text.matchAll(INSTALLED)) {
+			if (existsSync(join(top, path))) continue;
+			problem(`${shown}/${name} runs ${path}, which isn't installed: \`npm install\``);
+			sound = false;
+		}
+		return { text, sound };
 	};
-	if (!/\bhook pre-push\b/.test(hook("pre-push") ?? "")) {
+	const prePush = hook("pre-push");
+	if (!/\bhook pre-push\b/.test(prePush.text ?? "")) {
 		const set = git(root, "config", "core.hooksPath") === undefined ? " (core.hooksPath isn't set)" : "";
 		problem(`No pre-push hook in ${shown}${set} runs \`marram hook pre-push\`, so a push isn't gated: \`marram init\` writes one`);
-	} else ok(`${shown}/pre-push gates a push`);
-	const lintsCommits = /\bcommit-lint\b/.test(hook("commit-msg") ?? "");
+	} else if (prePush.sound) ok(`${shown}/pre-push gates a push`);
+	const commitMsg = hook("commit-msg");
+	const lintsCommits = /\bcommit-lint\b/.test(commitMsg.text ?? "");
 	if (config.review !== undefined && !lintsCommits) warning(`No commit-msg hook in ${shown} runs \`marram commit-lint "$1"\`, so a review fix's classes and rungs are checked only by CI, if at all`);
-	if (config.review !== undefined && lintsCommits) ok(`${shown}/commit-msg checks a review fix's classes and rungs`);
+	if (config.review !== undefined && lintsCommits && commitMsg.sound) ok(`${shown}/commit-msg checks a review fix's classes and rungs`);
 	if (config.review === undefined && lintsCommits) problem(`${shown}/commit-msg runs commit-lint, but marram.config.mjs has no review.classes for it to check against`);
 	if (config.review !== undefined) {
 		const doc = join(root, config.review.classes);

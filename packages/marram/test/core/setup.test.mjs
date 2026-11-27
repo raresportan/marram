@@ -100,11 +100,22 @@ test("a project in a folder of the repository gets a hook that gates it from its
 	try {
 		const app = join(repo.root, "app");
 		mkdirSync(app);
+		writeFileSync(join(app, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
 		repo.install(app);
 		const result = repo.marram(app, "init");
 		assert.equal(result.status, 0, result.stderr);
 		assert.equal(readFileSync(join(repo.root, ".githooks", "pre-push"), "utf8"), '#!/bin/sh\ncd "$(git rev-parse --show-toplevel)/app" || exit 1\nexec node "$(git rev-parse --show-toplevel)/app/node_modules/@raresportan/marram/bin/marram.mjs" hook pre-push\n');
 		assert.match(readFileSync(join(app, ".gitignore"), "utf8"), /^\.verify\/$/m);
+		const doctor = repo.marram(app, "doctor");
+		assert.equal(doctor.status, 0, doctor.stdout);
+		assert.match(doctor.stdout, /✓ \.githooks\/pre-push gates a push/);
+		// Installed at the top instead, the hook still names app's, which isn't there.
+		rmSync(join(app, "node_modules"), { recursive: true });
+		repo.install();
+		const moved = repo.marram(app, "doctor");
+		assert.equal(moved.status, 1);
+		assert.match(moved.stdout, /✗ \.githooks\/pre-push runs app\/node_modules\/@raresportan\/marram\/bin\/marram\.mjs, which isn't installed/);
+		assert.doesNotMatch(moved.stdout, /✓ \.githooks\/pre-push/);
 	} finally {
 		repo.remove();
 	}
@@ -156,6 +167,8 @@ test("doctor names each problem in the setup, with what to do about it", () => {
 			'✗ probe "gone": its patch, probes/gone.patch, doesn\'t exist',
 		];
 		for (const line of expected) assert.ok(lines.includes(line), `${line}\n---\n${result.stdout}`);
+		// A hook git skips doesn't gate a push, whatever it says.
+		if (process.platform !== "win32") assert.ok(!lines.some((line) => line.startsWith("✓ .githooks/pre-push")), result.stdout);
 
 		writeFileSync(join(repo.root, "marram.config.mjs"), 'export default { gate: { tiers: { fast: [], default: [{ name: "n", run: ["node", "-v"] }], full: [] } } };');
 		writeFileSync(join(repo.root, ".githooks", "commit-msg"), '#!/bin/sh\nexec npx marram commit-lint "$1"\n');
