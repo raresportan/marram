@@ -1,7 +1,7 @@
 // Spawning a project's command on each platform: a Windows .cmd goes through cmd.exe. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { spawnable } from "../../src/core/command.mjs";
+import { locate, spawnable } from "../../src/core/command.mjs";
 
 const windows = (files, env = {}) => ({
 	platform: "win32",
@@ -43,4 +43,14 @@ test("on Windows, a command given by path is found from the folder it runs in, a
 	// Written for every platform, with forward slashes, which cmd.exe would read as a switch.
 	assert.equal(spawnable("scripts/check.cmd", [], project).args[3].toLowerCase(), '"c:\\repo\\app\\scripts\\check.cmd"');
 	assert.equal(spawnable("./scripts/check", [], project).args[3].toLowerCase(), '"c:\\repo\\app\\scripts\\check.cmd"');
+});
+
+test("a command is found on PATH, or as a path from the folder it runs in, or not at all", () => {
+	const unix = (files, env = {}) => ({ platform: "linux", cwd: "/repo", env: { PATH: "/usr/bin:/opt/node/bin", ...env }, exists: (path) => files.includes(path) });
+	assert.equal(locate("npm", unix(["/opt/node/bin/npm"])), "/opt/node/bin/npm");
+	assert.equal(locate("scripts/check", unix(["/repo/scripts/check"])), "/repo/scripts/check");
+	assert.equal(locate("./check", unix(["/usr/bin/check"])), undefined);
+	assert.equal(locate("missing", unix([])), undefined);
+	assert.equal(locate("npm", windows(["C:\\Program Files\\nodejs\\npm.cmd"])).toLowerCase(), "c:\\program files\\nodejs\\npm.cmd");
+	assert.equal(locate("missing", windows([])), undefined);
 });

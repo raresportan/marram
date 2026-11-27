@@ -49,6 +49,23 @@ export default { gate: { logs: ".verify", tiers: { fast: tests, default: tests, 
 ```
 
 Ignore `.verify/` in Git, install Marram as a development tool, and run `npx marram gate`.
+
+`npx marram init` does that setup from the project's folder and leaves alone what's already there:
+- it writes `marram.config.mjs`, with tiers from the `typecheck`, `lint` and `test` scripts in `package.json`, or empty
+  tiers to fill;
+- it adds `.verify/` to `.gitignore`;
+- it installs a pre-push hook that runs `marram hook pre-push`, in `core.hooksPath`. If that isn't set, init sets it to
+  `.githooks`, unless git already runs hooks from `.git/hooks`.
+
+`npx marram doctor` lists what's still missing or wrong, and how to fix each one:
+- the config, checked in full;
+- a tier that runs nothing;
+- a stage command that isn't on PATH;
+- logs that Git doesn't ignore;
+- a hook that's missing, not executable, or points at a Marram that isn't installed;
+- a mistake-classes doc or probe patch that doesn't exist.
+
+It exits 1 when there's a problem to fix.
 For a plain Node CLI, a stage can run `["node", "--test"]`. The TypeScript lints and Electron adapter are optional.
 For named behavioral checks, import `runJourneys` from `@raresportan/marram/core/run` and provide a session with
 a `checks` array of `{ label, ok }` observations. The runner writes the report and checks feature-map citations.
