@@ -12,6 +12,11 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 - **guard-diff** reports a change to any config field it has no comparison of its own for: `gate.sleepGapMs`, `replay`'s
   and `review`'s, with their values, and a field Marram doesn't read, anywhere in the config, without its value.
 - **Ratchets**: `runRules` takes `match`, the files to read by name, so rules can run over JavaScript modules.
+- **State tables**: the supervisor that bounds replay's setup, a probe's check and a node:test run keeps its lifecycle
+  in one table (`machine.mjs`), with every event's outcome in every state, rather than in flags its callbacks set.
+  Once it has said how the command ended, nothing makes it say so again, and a second interruption is passed on
+  without starting the grace period over. An interrupted command is no longer also reported as timed out when its
+  timeout comes during the grace period.
 
 ### Fixed
 
