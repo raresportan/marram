@@ -1,9 +1,12 @@
 // The check lint: a check can fail on what it sees, and waits only through `until`.
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import ts from "typescript";
-import { checkProblems } from "../../src/core/check-lint.mjs";
+import { checkProblems, lintChecks } from "../../src/core/check-lint.mjs";
 
 const lint = (code, waits) => checkProblems(ts.createSourceFile("x-check.ts", code, ts.ScriptTarget.Latest, true), waits);
 
@@ -40,4 +43,14 @@ test("an upper bound on elapsed time is flagged, however it's written", () => {
 	assert.equal(lint(`throw 0; const took = performance.now() - t; if (1000 > took) {}`).length, 1);
 	assert.equal(lint(`throw 0; const took = Date.now() - t; const ms = took; if (ms <= 5) {}`).length, 1);
 	assert.deepEqual(lint(`throw 0; if (Date.now() - started > 900) {}`), []);
+});
+
+test("lintChecks reads every file its pattern names, with the g or y flag too", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-checks-"));
+	try {
+		for (const name of ["a.test.ts", "b.test.ts", "c.test.ts", "helper.ts"]) writeFileSync(join(root, name), `console.log("saw");\n`);
+		for (const match of [/\.test\.ts$/, /\.test\.ts$/g, /[a-z]\.test\.ts$/y]) assert.equal(lintChecks({ root, folder: ".", match }).files, 3, String(match));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });

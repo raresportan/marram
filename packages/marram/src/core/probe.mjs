@@ -27,7 +27,7 @@ import { probesProblems } from "./config.mjs";
 import { runBounded } from "./bounded.mjs";
 import { spawnable } from "./command.mjs";
 import { outputExcerpt as excerpt } from "./failure-excerpt.mjs";
-import { jsonOption, printJson } from "./json-output.mjs";
+import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
 import { matches } from "./pattern.mjs";
@@ -51,7 +51,7 @@ export function probe(root, config, given) {
 	const signals = ["SIGINT", "SIGTERM"].map((signal) => {
 		const stop = () => {
 			forget();
-			process.exit(128 + (signal === "SIGINT" ? 2 : 15));
+			exitWhenWritten(128 + (signal === "SIGINT" ? 2 : 15));
 		};
 		process.once(signal, stop);
 		return [signal, stop];

@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { matches } from "./pattern.mjs";
+import { exitWhenWritten } from "./json-output.mjs";
 
 const REVIEW_FIX = /\b(?:(?:code )?review|PR|pull request)(?:'s)? (?:findings?|gaps?|comments|feedback|notes|nits|suggestions)\b|\b(?:address(?:es|ed|ing)?|appl(?:y|ies|ied|ying)|resolv(?:e[sd]?|ing)|handl(?:e[sd]?|ing)) (?:the |all )?(?:review|feedback|nits)\b/i;
 const RUNGS = ["type", "lint", "architecture", "check", "journey", "unit"];
@@ -68,7 +69,7 @@ export function problems(message, { classes, rungs = RUNGS, subjects }) {
 	});
 }
 
-export function lintCommits(root, config, [mode, target]) {
+export async function lintCommits(root, config, [mode, target]) {
 	const doc = config.review.classes;
 	const rules = { classes: classesIn(readFileSync(join(root, doc), "utf8")), rungs: config.review.rungs, subjects: subjectsOf(config) };
 	if (rules.classes.length === 0) throw new Error(`${doc} lists no classes: its table rows start with | **<name>**`);
@@ -78,6 +79,6 @@ export function lintCommits(root, config, [mode, target]) {
 	const found = messages.flatMap(([commit, message]) => problems(message, rules).map((problem) => `${commit.slice(0, 12)}: ${problem}`));
 	if (found.length > 0) {
 		console.error(`commit-lint: a fix for review findings names each one's class and rung (${doc})\n${found.map((problem) => `  ${problem}`).join("\n")}`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 }

@@ -1,6 +1,7 @@
 // The ratchet: a site off the list fails with the fix, and the list only shrinks.
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,6 +126,38 @@ test("runRules parses each file once for every rule, and judges each rule's site
 		]);
 		// Each file was parsed once: both rules saw the same tree. The owner was parsed, and skipped by its rule only.
 		for (const [file, sources] of seen) assert.ok(sources.length === (file === "owner.ts" ? 1 : 2) && sources.every((source) => source === sources[0]), file);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("runRules reads the files match names, parsed as the language their extension says, and TypeScript's otherwise", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-rules-"));
+	try {
+		mkdirSync(join(root, "src"), { recursive: true });
+		writeFileSync(join(root, "src", "a.mjs"), "danger(<b>x</b>);\n");
+		writeFileSync(join(root, "src", "b.ts"), "danger();\n");
+		writeFileSync(join(root, "src", "c.d.ts"), "declare function danger(): void;\n");
+		const files = [];
+		const rule = { find: (source, { file }) => (files.push([file, source.languageVariant]), []), allowed: {}, fix: "", stale: "" };
+		runRules({ root, folder: "src", list: "rules.mjs", rules: [rule], match: /\.mjs$/g });
+		runRules({ root, folder: "src", list: "rules.mjs", rules: [rule] });
+		assert.deepEqual(files, [["a.mjs", ts.LanguageVariant.JSX], ["b.ts", ts.LanguageVariant.Standard]]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("finish fails only once a list bigger than a pipe holds has reached a reader that's slow to drain it", { skip: process.platform === "win32" && "reads through sh" }, () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-finish-"));
+	try {
+		// 3000 problems of about 100 characters: about 300 KB, where a pipe holds 64 KB.
+		const ratchetUrl = new URL("../../src/core/ratchet.mjs", import.meta.url).href;
+		writeFileSync(join(root, "lint.mjs"), `import { finish } from ${JSON.stringify(ratchetUrl)};\nfinish("lint", Array.from({ length: 3000 }, (_, i) => i + " " + "x".repeat(96)), "fine");\n`);
+		const slow = spawnSync("sh", ["-c", `("${process.execPath}" lint.mjs; echo "exit $?" >&2) 2>&1 | (sleep 1; cat)`], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+		const problems = slow.stdout.split("\n").filter((line) => line.startsWith("  ✗ "));
+		assert.equal(problems.length, 3000);
+		assert.match(slow.stdout, /exit 1\n$/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

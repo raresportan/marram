@@ -11,6 +11,7 @@
 // how the command ended on file descriptor 3.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
+import { exitWhenWritten } from "./json-output.mjs";
 
 const GRACE_MS = 5_000;
 const WINDOWS = process.platform === "win32";
@@ -93,7 +94,7 @@ function supervise({ file, args, timeout, options }) {
 		clearTimeout(timer);
 		report({ status: ended?.status ?? null, signal: ended?.signal ?? null, timedOut });
 		// What it forwarded is written before the supervisor goes: to a pipe, a write can finish later.
-		process.stdout.write("", () => process.stderr.write("", () => process.exit(0)));
+		exitWhenWritten(0);
 	};
 	/** Stop the command and what it started; once it's gone and nothing it can reach is left, let go of its output. */
 	const halt = (signal) => {
@@ -121,7 +122,7 @@ function supervise({ file, args, timeout, options }) {
 	child.on("error", (error) => {
 		clearTimeout(timer);
 		report({ error: { code: error.code, message: error.message } });
-		process.exit(0);
+		exitWhenWritten(0);
 	});
 	child.on("exit", (status, signal) => {
 		ended = { status, signal };

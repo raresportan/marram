@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { classesIn } from "./commit-lint.mjs";
 import { locate } from "./command.mjs";
 import { findRoot, importConfig, problems } from "./config.mjs";
+import { exitWhenWritten } from "./json-output.mjs";
 
 // The Marram a hook runs, named from the repository's top as init writes it: node_modules/… or app/node_modules/….
 const INSTALLED = /\$\(git rev-parse --show-toplevel\)\/([^\s"'`$]*node_modules\/@raresportan\/marram\/bin\/marram\.mjs)/g;
@@ -141,5 +142,5 @@ export async function doctor(from = process.cwd()) {
 	for (const { level, text } of findings) console.log(`${MARKS[level]} ${text}`);
 	const count = findings.filter((finding) => finding.level === "problem").length;
 	console.log(count === 0 ? "\nNothing to fix." : `\n${count} problem(s) to fix.`);
-	if (count > 0) process.exit(1);
+	if (count > 0) await exitWhenWritten(1);
 }

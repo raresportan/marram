@@ -14,6 +14,7 @@ import { treeOf } from "./gate-state.mjs";
 import { removedCitations } from "./map-diff.mjs";
 import { isTestFile, testsIn } from "./test-inventory.mjs";
 import { jsonOption, printJson } from "./json-output.mjs";
+import { matches } from "./pattern.mjs";
 
 const TIERS = ["fast", "default", "full"];
 const CONFIG = "marram.config.mjs";
@@ -422,7 +423,7 @@ function everyWorkspace(top, project, files) {
 	const excluded = globs.filter((glob) => glob.startsWith("!")).map((glob) => pattern(glob.slice(1)));
 	return files
 		.map((file) => posix.dirname(file))
-		.filter((folder) => folder !== project && included.some((match) => match.test(folder)) && !excluded.some((match) => match.test(folder)))
+		.filter((folder) => folder !== project && included.some((glob) => matches(glob, folder)) && !excluded.some((glob) => matches(glob, folder)))
 		.sort();
 }
 

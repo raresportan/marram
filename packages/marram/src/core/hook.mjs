@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { git, treeOf, updateState, verdictOf, readState } from "./gate-state.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
+import { exitWhenWritten } from "./json-output.mjs";
 
 const MAX_SENT_BACK = 3;
 const MARRAM = join(import.meta.dirname, "..", "..", "bin", "marram.mjs");
@@ -48,7 +49,7 @@ async function prePush(root, config) {
 	const tier = config.gate?.prePush ?? "default";
 	if (tier !== "default" && tier !== "full") {
 		console.error(`gate.prePush is "${tier}": a push can require the default gate or the full one.`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	// stdin: one line per ref pushed, "<local ref> <local sha> <remote ref> <remote sha>".
 	for (const line of stdin().split("\n").filter(Boolean)) {
@@ -58,13 +59,13 @@ async function prePush(root, config) {
 		if (verdictOf(root, tree, tier, config.gate)?.passed) continue;
 		if (treeOf(root) !== tree) {
 			console.error(`${ref} hasn't passed the ${tier} gate, and the working tree isn't that commit, so it can't be checked here.\nCommit or stash your changes, check it out and push again (or \`git push --no-verify\` to skip the gate).`);
-			process.exit(1);
+			await exitWhenWritten(1);
 		}
 		console.error(`Gating ${ref} (the ${tier} gate) before it's pushed (\`git push --no-verify\` skips this).`);
 		const verdict = await judge(root, config, tree, true, tier);
 		if (!verdict.passed) {
 			console.error(failure(verdict));
-			process.exit(1);
+			await exitWhenWritten(1);
 		}
 	}
 }
@@ -80,9 +81,9 @@ async function claudeStop(root, config) {
 	const tree = treeOf(root);
 	const turn = readState(root).sessions[session];
 	// A turn that changed no code (a question, a plan) ends without the gate.
-	if (turn?.start === tree) process.exit(0);
+	if (turn?.start === tree) await exitWhenWritten(0);
 	const verdict = await judge(root, config, tree, false);
-	if (verdict.passed) process.exit(0);
+	if (verdict.passed) await exitWhenWritten(0);
 	// Counted under the lock, from the state as it is now: the gate may have run for minutes since `turn` was read.
 	const sendBack = updateState(root, (state) => {
 		const now = state.sessions[session];
@@ -93,17 +94,17 @@ async function claudeStop(root, config) {
 	if (!sendBack) {
 		// Let the turn end so a person can look; say so rather than end quietly.
 		console.log(JSON.stringify({ systemMessage: `The gate is still red after ${MAX_SENT_BACK} tries at ${verdict.stage ?? "an unknown stage"}: ${verdict.log ?? "run marram gate"}` }));
-		process.exit(0);
+		await exitWhenWritten(0);
 	}
 	console.error(failure(verdict));
-	process.exit(2);
+	await exitWhenWritten(2);
 }
 
 async function finish(root, config) {
 	const verdict = await judge(root, config, treeOf(root), false);
 	if (!verdict.passed) {
 		console.log(failure(verdict));
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 }
 
@@ -112,7 +113,7 @@ const modes = { "pre-push": prePush, "claude-turn": claudeTurn, "claude-stop": c
 export async function hook(root, config, [mode]) {
 	if (!(mode in modes)) {
 		console.error(`Usage: marram hook ${Object.keys(modes).join(" | ")}`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	await modes[mode](root, config);
 }

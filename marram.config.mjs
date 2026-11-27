@@ -5,7 +5,7 @@ const npm = (name, ...args) => ({ name, run: ["npm", ...args] });
 const together = (stage) => ({ ...stage, concurrent: true });
 const fast = [
 	npm("build", "run", "build", "-w", "@raresportan/marram"),
-	...[npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }].map(together),
+	...[npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }, { name: "rules", run: ["node", "scripts/rules.mjs"] }].map(together),
 ];
 const tally = (tier) => ({ name: "tally", run: ["npm", "run", tier, "-w", "tally"] });
 

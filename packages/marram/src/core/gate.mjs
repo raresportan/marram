@@ -141,12 +141,12 @@ export async function gate(root, config, given) {
 	const [tier = "default"] = args;
 	if (!TIERS.includes(tier)) {
 		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full] [--json]`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	const { logs = ".verify", keep = 20, progress, tiers, sleepGapMs = 30_000 } = config.gate ?? {};
 	if (!Array.isArray(tiers?.[tier])) {
 		console.error(`marram.config.mjs has no gate.tiers.${tier}: a list of stages.`);
-		process.exit(1);
+		await exitWhenWritten(1);
 	}
 	const dir = await startRun(join(root, logs), tier);
 	await pruneLogs(join(root, logs), keep);
