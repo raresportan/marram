@@ -362,6 +362,28 @@ test("a workspace taken out of (or put into) package.json's workspaces, under th
 	}
 });
 
+test("stages that now run together, or no longer do, are reported: a stage run alongside another no longer waits for it", () => {
+	const repo = repository();
+	try {
+		const build = { name: "build", run: ["npm", "run", "build"] };
+		const [unit, journeys] = repo.appGate.tiers.default;
+		const together = (stage) => ({ ...stage, concurrent: true });
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [build, unit, journeys], full: [build, together(unit), together(journeys)] } }));
+		repo.commit();
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [together(build), together(unit), journeys], full: [build, unit, journeys] } }));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^ {2}default: run together now build, unit \(was none\)$/m);
+		assert.match(result.stdout, /^ {2}full: run together now none \(was unit, journeys\)$/m);
+		// Marked on its own, a stage still runs alone: nothing to report.
+		repo.commit();
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [together(build), together(unit), journeys], full: [build, unit, together(journeys)] } }));
+		assert.match(repo.diff().stdout, /^No guard changes since /m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("with --json, guard-diff's sections are JSON", () => {
 	const repo = repository();
 	try {
