@@ -27,5 +27,9 @@ if (!(command in commands)) {
 	console.error("Usage: marram probe [fault]… | marram guard-diff <base> [--map <map>]… | marram replay <base> <test-file> <test-name> <expected assertion message> | marram map-diff <base> <map> | marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>]");
 	process.exit(1);
 }
-const { root, config } = await load();
+// A config with problems is reported as what to fix, not as a crash.
+const { root, config } = await load().catch((error) => {
+	console.error(error.message);
+	process.exit(1);
+});
 await commands[command](root, config, args);

@@ -23,19 +23,19 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { checkoutTree, repoPath, scratchFolder } from "./checkout.mjs";
+import { probesProblems } from "./config.mjs";
 import { spawnable } from "./command.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
-const isCommand = (value) => Array.isArray(value) && value.length > 0 && value.every((part) => typeof part === "string" && part !== "");
 
 export function probe(root, config, names) {
-	const { setup, link = [], timeoutMs = 300_000, faults } = config.probes ?? {};
+	// Checked as loading the config checks it, for a caller that hands one over directly.
+	const [problem] = probesProblems(config.probes ?? {});
+	if (problem !== undefined) throw new Error(problem);
+	const { setup, link = [], timeoutMs = 300_000, faults } = config.probes;
 	const chosen = choose(faults, names);
-	if (setup !== undefined && !isCommand(setup)) throw new Error('probes.setup must be a command and its arguments, as in ["npm", "ci"]');
-	if (!Array.isArray(link) || !link.every((path) => typeof path === "string" && path !== "")) throw new Error("probes.link must be a list of paths");
-	if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("probes.timeoutMs must be a positive number of milliseconds");
 	for (const path of link) {
 		// A link to nothing would let what runs in the copy create that path in the working tree, through the link.
 		if (!lstatSync(resolve(root, path), { throwIfNoEntry: false })) throw new Error(`probes.link: ${path} isn't in the working tree`);
@@ -119,19 +119,8 @@ function hasLink(folder, levels) {
 	return children.some((child) => child.isSymbolicLink()) || (levels > 1 && children.some((child) => child.isDirectory() && hasLink(join(folder, child.name), levels - 1)));
 }
 
-/** The faults `names` picks (all of them when it's empty), each checked for what a fault needs. */
+/** The faults `names` picks: all of them when it's empty. */
 function choose(faults, names) {
-	if (!Array.isArray(faults) || faults.length === 0) throw new Error("marram.config.mjs has no probes.faults");
-	faults.forEach((fault, i) => {
-		const label = `probes.faults[${i}]${typeof fault?.name === "string" ? ` ("${fault.name}")` : ""}`;
-		if (typeof fault?.name !== "string" || fault.name === "") throw new Error(`${label} needs a name`);
-		if (typeof fault.patch !== "string" || fault.patch === "") throw new Error(`${label} needs a patch`);
-		const byCommand = isCommand(fault.run) && (fault.expect instanceof RegExp || (typeof fault.expect === "string" && fault.expect !== ""));
-		const byTest = ["file", "name", "assertion"].every((key) => typeof fault.test?.[key] === "string" && fault.test[key] !== "");
-		if (byCommand === byTest) throw new Error(`${label} needs either run and expect, or test: { file, name, assertion }`);
-		if (fault.cwd !== undefined && (typeof fault.cwd !== "string" || fault.cwd === "")) throw new Error(`${label}: cwd must be a path in the project`);
-		if (faults.findIndex((other) => other.name === fault.name) !== i) throw new Error(`${label}: another fault has that name`);
-	});
 	for (const name of names) if (!faults.some((fault) => fault.name === name)) throw new Error(`No fault named "${name}" in probes.faults`);
 	return names.length === 0 ? faults : faults.filter((fault) => names.includes(fault.name));
 }

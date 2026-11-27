@@ -4,19 +4,33 @@
 //   (default) Minutes: before a task counts as done.
 //   full      The default gate and more (a build, the slow journeys). Before merging UI work, or nightly.
 // What each tier runs is the project's: `gate.tiers` in marram.config.mjs. Stages run in order and the first failure
-// stops the gate. Each stage's output is kept in its own log under `gate.logs`/gate-<tier>-<time>/, with report.json.
+// stops the gate. Each stage's output is kept in its own log under `gate.logs`/gate-<tier>-<time>/, with report.json;
+// the newest `gate.keep` runs' folders are kept, 20 unless set.
 // A stage that fails after the machine slept during it runs again: timeouts ran out and frames stopped while it slept,
 // so that failure says nothing about the code. A pause counts as sleep past `gate.sleepGapMs`, 30 seconds by default.
 // The default and full gates record their verdict for the working tree (gate-state.mjs), which the hooks reuse.
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
 const TIERS = ["fast", "default", "full"];
+const RUN = /^gate-(?:fast|default|full)-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)$/;
+
+/**
+ * Removes all but the newest `keep` of the gate's run folders in `logs`, whatever their tier. Only the gate's own folders
+ * (gate-<tier>-<time>) are touched: anything else a project keeps there stays.
+ */
+export async function pruneLogs(logs, keep) {
+	const runs = (await readdir(logs, { withFileTypes: true }).catch(() => []))
+		.filter((entry) => entry.isDirectory() && RUN.test(entry.name))
+		.map((entry) => ({ name: entry.name, time: RUN.exec(entry.name)[1] }))
+		.sort((a, b) => b.time.localeCompare(a.time));
+	await Promise.all(runs.slice(keep).map(({ name }) => rm(join(logs, name), { recursive: true, force: true })));
+}
 
 /**
  * Whether the full tier runs each default stage, in order, with the same command, arguments and environment; other
@@ -37,13 +51,14 @@ export async function gate(root, config, [tier = "default"]) {
 		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full]`);
 		process.exit(1);
 	}
-	const { logs, progress, tiers, sleepGapMs = 30_000 } = config.gate;
+	const { logs = ".verify", keep = 20, progress, tiers, sleepGapMs = 30_000 } = config.gate ?? {};
 	if (!Array.isArray(tiers?.[tier])) {
 		console.error(`marram.config.mjs has no gate.tiers.${tier}: a list of stages.`);
 		process.exit(1);
 	}
 	const dir = join(root, logs, `gate-${tier}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 	await mkdir(dir, { recursive: true });
+	await pruneLogs(join(root, logs), keep);
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
 
 	// A git hook (pre-push) runs with GIT_DIR and the like pointing at this repository; checks that make their own scratch
