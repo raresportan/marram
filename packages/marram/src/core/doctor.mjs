@@ -7,10 +7,9 @@
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { classesIn } from "./commit-lint.mjs";
 import { locate } from "./command.mjs";
-import { findRoot, problems } from "./config.mjs";
+import { findRoot, importConfig, problems } from "./config.mjs";
 
 // The Marram a hook runs, named from the repository's top as init writes it: node_modules/… or app/node_modules/….
 const INSTALLED = /\$\(git rev-parse --show-toplevel\)\/([^\s"'`$]*node_modules\/@raresportan\/marram\/bin\/marram\.mjs)/g;
@@ -52,7 +51,7 @@ export async function diagnose(from = process.cwd()) {
 	}
 	let config;
 	try {
-		config = (await import(pathToFileURL(join(root, "marram.config.mjs")).href)).default;
+		config = await importConfig(root);
 	} catch (error) {
 		problem(`marram.config.mjs doesn't load: ${error.message}`);
 		return findings;

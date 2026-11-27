@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, rmSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectTreeKey, saltOf, stagesKey, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
@@ -181,11 +181,10 @@ export async function gate(root, config, [tier = "default"]) {
 	// same stages (see verdictOf).
 	const verdict = (passed, extra = {}) => {
 		if (project === undefined) return;
-		updateState(root, (state) => {
-			const salt = saltOf(state);
-			const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: stagesKey(salt, tiers.default) } : {};
-			state.trees[verdictKey(project, tier)] = { passed, tier, stages: stagesKey(salt, tiers[tier]), at: Date.now(), ...extra, ...covers };
-		});
+		const key = stageKeys(root, config.gate, { create: true });
+		const stages = key(tiers[tier]);
+		const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: key(tiers.default) } : {};
+		updateState(root, (state) => { state.trees[verdictKey(project, tier, stages)] = { passed, tier, stages, at: Date.now(), ...extra, ...covers }; });
 	};
 
 	console.log(`Gate (${tier}). Logs: ${dir}`);

@@ -22,15 +22,14 @@ const stdin = () => readFileSync(0, "utf8");
  * progress to the terminal. The gate runs with this process's environment, so it builds the same stages.
  */
 async function judge(root, config, tree, show, tier = "default") {
-	const tiers = config.gate?.tiers;
-	const known = verdictOf(root, tree, tier, tiers);
+	const known = verdictOf(root, tree, tier, config.gate);
 	if (known !== undefined) return { ...known, reused: true };
 	const gate = spawn(process.execPath, [MARRAM, "gate", ...(tier === "default" ? [] : [tier])], { cwd: root, stdio: ["ignore", show ? "inherit" : "ignore", "inherit"] });
 	// A hook that's killed (its timeout) passes it on, so the gate can stop what it started.
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.once(signal, () => gate.kill(signal));
 	await new Promise((done) => gate.once("close", done));
 	// A gate that couldn't run, or that changed files as it ran, records no pass; it counts as failed with no stage.
-	return verdictOf(root, tree, tier, tiers) ?? { passed: false };
+	return verdictOf(root, tree, tier, config.gate) ?? { passed: false };
 }
 
 /** What an agent is told when the gate fails: where it failed, and the end of that stage's log. */
@@ -56,7 +55,7 @@ async function prePush(root, config) {
 		const [ref, sha] = line.split(" ");
 		if (/^0+$/.test(sha)) continue; // a deletion
 		const tree = git(root, ["rev-parse", `${sha}^{tree}`]);
-		if (verdictOf(root, tree, tier, config.gate?.tiers)?.passed) continue;
+		if (verdictOf(root, tree, tier, config.gate)?.passed) continue;
 		if (treeOf(root) !== tree) {
 			console.error(`${ref} hasn't passed the ${tier} gate, and the working tree isn't that commit, so it can't be checked here.\nCommit or stash your changes, check it out and push again (or \`git push --no-verify\` to skip the gate).`);
 			process.exit(1);

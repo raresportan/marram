@@ -55,7 +55,7 @@ const statePath = (cwd) => join(resolve(cwd, git(cwd, ["rev-parse", "--git-commo
 export function readState(cwd) {
 	try {
 		const state = JSON.parse(readFileSync(statePath(cwd), "utf8"));
-		return { trees: state.trees ?? {}, sessions: state.sessions ?? {}, salt: state.salt };
+		return { trees: state.trees ?? {}, sessions: state.sessions ?? {} };
 	} catch {
 		return { trees: {}, sessions: {} };
 	}
@@ -94,7 +94,7 @@ export function updateState(cwd, change) {
 		const result = change(state);
 		const newest = (rows) => Object.fromEntries(Object.entries(rows).sort(([, a], [, b]) => b.at - a.at).slice(0, KEEP));
 		const temporary = `${path}.${process.pid}.tmp`;
-		writeFileSync(temporary, JSON.stringify({ salt: state.salt, trees: newest(state.trees), sessions: newest(state.sessions) }, null, 2));
+		writeFileSync(temporary, JSON.stringify({ trees: newest(state.trees), sessions: newest(state.sessions) }, null, 2));
 		renameSync(temporary, path);
 		return result;
 	});
@@ -103,33 +103,59 @@ export function updateState(cwd, change) {
 /** One stage as the gate runs it: its command and arguments, and its environment in a fixed order. */
 export const stageText = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
 
-/**
- * What `stages` run, as a key a verdict keeps: an HMAC under the state's own random salt, so the same stages give the
- * same key in this repository while the key gives away nothing of their commands or environment (which may hold
- * secrets). Undefined without a list of stages.
- */
-export const stagesKey = (salt, stages) => (Array.isArray(stages) ? createHmac("sha256", salt).update(JSON.stringify(stages.map(stageText))).digest("hex") : undefined);
+// The secret that stage keys are made with, in its own file beside the state and readable only by its owner: the state
+// holds keys, and with the secret beside them a reader could check guesses at a stage's low-entropy values.
+const keyPath = (cwd) => join(resolve(cwd, git(cwd, ["rev-parse", "--git-common-dir"])), "marram-gate.key");
 
-/** The state's salt for stage keys, made the first time one is needed. Call it inside updateState. */
-export const saltOf = (state) => (state.salt ??= randomBytes(32).toString("hex"));
+/** The secret for stage keys, or undefined when there's none yet; `create` makes it then. */
+function secretOf(cwd, create) {
+	const path = keyPath(cwd);
+	try {
+		return readFileSync(path, "utf8");
+	} catch (error) {
+		if (error.code !== "ENOENT" || !create) return undefined;
+	}
+	try {
+		// Created only if it isn't there, so two gates at once can't make two secrets.
+		writeFileSync(path, randomBytes(32).toString("hex"), { flag: "wx", mode: 0o600 });
+	} catch (error) {
+		if (error.code !== "EEXIST") throw error;
+	}
+	return readFileSync(path, "utf8");
+}
+
+/**
+ * A function from a tier's stages to the key a verdict on them keeps, for the project's `gate` configuration. The key is
+ * an HMAC over each stage's command, arguments and `env`, and over the inherited variables `gate.env` names (each one's
+ * value, or that it's unset): what decides whether a verdict still answers for the stages as the gate would run them
+ * now. Other inherited variables don't count, since PATH, the terminal's and a hook's own differ from run to run. The key
+ * gives away nothing of what it's over, which may hold secrets. With no secret yet and `create` unset, there are no keys.
+ */
+export function stageKeys(cwd, gate, { create = false } = {}) {
+	const secret = secretOf(cwd, create);
+	if (secret === undefined) return () => undefined;
+	const inherited = [...(gate?.env ?? [])].sort().map((name) => [name, process.env[name] ?? null]);
+	return (stages) => (Array.isArray(stages) ? createHmac("sha256", secret).update(JSON.stringify([stages.map(stageText), inherited])).digest("hex") : undefined);
+}
 
 /**
  * `{ passed, tier, stage?, log?, stages, coversDefault?, at }` for a tree `tier` (the default gate, or the full one)
- * passed, or failed less than 15 minutes ago, running the stages `tiers` (the configuration as loaded now) gives it. The
- * configuration may build its stages from the environment, so the same tree can need other stages than a verdict ran:
- * that verdict doesn't count. A full pass counts for the default gate when it ran the default stages `tiers` gives.
+ * passed, or failed less than 15 minutes ago, running the stages the project's `gate` configuration (as loaded now)
+ * gives it. The configuration may build its stages from the environment, so the same tree can need other stages than
+ * a verdict ran: that verdict doesn't count. A full pass counts for the default gate when it ran the default stages the
+ * configuration gives now.
  */
-export function verdictOf(cwd, tree, tier, tiers) {
-	const { trees, salt } = readState(cwd);
-	if (salt === undefined) return undefined;
-	const key = (stages) => stagesKey(salt, stages);
+export function verdictOf(cwd, tree, tier, gate) {
+	const key = stageKeys(cwd, gate);
+	const wanted = key(gate?.tiers?.[tier]);
+	if (wanted === undefined) return undefined;
+	const { trees } = readState(cwd);
 	const project = projectTreeKey(cwd, tree);
-	const recorded = current(trees[verdictKey(project, tier)]);
-	const own = recorded !== undefined && recorded.stages !== undefined && recorded.stages === key(tiers?.[tier]) ? recorded : undefined;
+	const own = current(trees[verdictKey(project, tier, wanted)]);
 	if (own === undefined && tier === "default") {
-		const full = trees[verdictKey(project, "full")];
-		const wanted = key(tiers?.default);
-		if (full?.passed && wanted !== undefined && full.coversDefault === wanted) return full;
+		const full = `${verdictKey(project, "full")}:`;
+		const covering = Object.entries(trees).find(([slot, verdict]) => slot.startsWith(full) && verdict.passed && verdict.coversDefault === wanted);
+		if (covering !== undefined) return covering[1];
 	}
 	return own;
 }
@@ -140,4 +166,8 @@ const current = (verdict) => (verdict === undefined || verdict.passed || Date.no
 /** The config directory within the worktree distinguishes projects sharing the same Git tree and state file. */
 export const projectTreeKey = (cwd, tree) => JSON.stringify([git(cwd, ["rev-parse", "--show-prefix"]), tree]);
 
-export const verdictKey = (projectTree, tier) => (tier === "full" ? `${projectTree}:full` : projectTree);
+/**
+ * Where a verdict is kept: per project and tree, tier, and the key of the stages it ran, so gates running other stages on
+ * the same tree (another environment, at the same time) keep a verdict each.
+ */
+export const verdictKey = (projectTree, tier, stages) => `${tier === "full" ? `${projectTree}:full` : projectTree}${stages === undefined ? "" : `:${stages}`}`;

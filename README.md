@@ -119,9 +119,19 @@ counts for the default gate too when it ran each default stage, in order, with t
 other stages may come between them. A default run afterwards doesn't replace it. A full tier that runs something else,
 such as `npm run gate:full` where the default runs `npm run gate`, doesn't answer for the default gate, which then runs.
 
-A pass counts only while the configuration gives the same stages. A configuration can build its stages from the
-environment, so the same code can need other stages: then the gate runs again. A verdict keeps a key for the stages it
-ran (an HMAC under a random salt kept with the verdicts), not their commands or environment, which may hold secrets.
+A pass counts only while the configuration gives the same stages: their commands, arguments and `env`. A configuration
+can build its stages from the environment, so the same code can need other stages, and then the gate runs again.
+
+Stages also inherit the gate's environment. An inherited variable counts only if `gate.env` names it, as in
+`env: ["CI", "NODE_ENV"]`: then a pass made with one value doesn't count for another. Other inherited variables don't
+count, because `PATH` and the variables a terminal or hook sets differ from run to run. Name each variable your checks
+read.
+
+Gates run on the same code with different stages keep a verdict each. The config is evaluated from the project's root,
+wherever a command runs.
+
+A verdict keeps a key for the stages it ran, not their commands or environment, which may hold secrets. The key is an
+HMAC under a secret kept in its own owner-only file, `marram-gate.key` in the git folder.
 
 ```sh
 # .githooks/commit-msg

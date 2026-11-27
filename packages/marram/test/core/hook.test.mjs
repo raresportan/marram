@@ -2,7 +2,7 @@
 // Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -187,7 +187,69 @@ test("a verdict counts only while the configuration gives the stages it ran, whi
 		assert.equal(repo.runs(), "dfdxd");
 		assert.equal(finish().status, 0, "the default pass is reused for the same stages");
 		assert.equal(finish({ EXTRA: "1" }).status, 1, "but not for others");
-		assert.equal(repo.runs(), "dfdxddx");
+		assert.equal(repo.runs(), "dfdxd", "whose own failure, under 15 minutes old, is reused");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("an inherited variable gate.env names decides whether a verdict counts, and one it doesn't name doesn't", () => {
+	const repo = project();
+	try {
+		// The stage fails when FAIL is set, which it inherits rather than being given.
+		const d = { name: "d", run: ["node", "-e", 'require("fs").appendFileSync("runs", "d"); process.exit(process.env.FAIL ? 1 : 0)'] };
+		const configure = (env) => writeFileSync(join(repo.root, "marram.config.mjs"), `export default ${JSON.stringify({ gate: { logs: "logs", ...env, tiers: { fast: [], default: [d], full: [d] } } })};\n`);
+		const finish = (env = {}) => spawnSync("node", [BIN, "hook", "finish"], { cwd: repo.root, encoding: "utf8", env: { ...process.env, ...env } });
+		configure({ env: ["FAIL"] });
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		assert.equal(finish({ FAIL: "1" }).status, 1, "FAIL is named, so the pass made without it doesn't count");
+		assert.equal(repo.runs(), "dd");
+
+		configure({});
+		repo.commit("two");
+		assert.equal(repo.gate().status, 0);
+		assert.equal(finish({ FAIL: "1" }).status, 0, "unnamed, an inherited variable doesn't count: the pass is reused");
+		assert.equal(repo.runs(), "ddd");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("finish in a folder of the project judges the config as the gate does, from the project's root", () => {
+	const repo = project();
+	try {
+		// A stage built from the folder the config is evaluated in.
+		writeFileSync(join(repo.root, "marram.config.mjs"), 'const d = { name: "d", run: ["node", "-e", `require("fs").appendFileSync("runs", "d")`, process.cwd()] };\nexport default { gate: { logs: "logs", tiers: { fast: [], default: [d], full: [d] } } };\n');
+		mkdirSync(join(repo.root, "sub"));
+		writeFileSync(join(repo.root, "sub", "file.txt"), "x");
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		const finish = spawnSync("node", [BIN, "hook", "finish"], { cwd: join(repo.root, "sub"), encoding: "utf8" });
+		assert.equal(finish.status, 0, finish.stdout + finish.stderr);
+		assert.equal(repo.runs(), "d", "the pass is reused");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("gates run with different stages on the same tree keep a verdict each, and the secret isn't kept with them", () => {
+	const repo = project();
+	try {
+		const d = { name: "d", run: ["node", "-e", 'require("fs").appendFileSync("runs", process.env.MODE)'] };
+		writeFileSync(join(repo.root, "marram.config.mjs"), `export default ${JSON.stringify({ gate: { logs: "logs", env: ["MODE"], tiers: { fast: [], default: [d], full: [d] } } })};\n`);
+		repo.commit("one");
+		const run = (args, MODE) => spawnSync("node", [BIN, ...args], { cwd: repo.root, encoding: "utf8", env: { ...process.env, MODE } });
+		assert.equal(run(["gate"], "a").status, 0);
+		assert.equal(run(["gate"], "b").status, 0);
+		assert.equal(run(["hook", "finish"], "a").status, 0);
+		assert.equal(run(["hook", "finish"], "b").status, 0);
+		assert.equal(repo.runs(), "ab", "each environment's pass is still there");
+
+		const key = join(repo.root, ".git", "marram-gate.key");
+		const secret = readFileSync(key, "utf8");
+		assert.doesNotMatch(readFileSync(join(repo.root, ".git", "marram-gate.json"), "utf8"), new RegExp(secret));
+		if (process.platform !== "win32") assert.equal(statSync(key).mode & 0o777, 0o600);
 	} finally {
 		repo.remove();
 	}
