@@ -313,7 +313,8 @@ changed in its guards since the merge base:
   `env`;
 - `env` changes, by variable name only, since a value may be a token;
 - `gate.prePush`, and the inherited variables `gate.env` stops or starts counting for reusing a pass;
-- the `package.json` scripts a stage runs, in each workspace its command names with `-w` and, for npm, the `pre` and
+- the `package.json` scripts a stage runs, in each workspace its command names with `-w` (or every workspace the package lists, with
+  `--workspaces`, and the root too with `--include-workspace-root`) and, for npm, the `pre` and
   `post` scripts around them. Each is found in its own revision and matched by the stage that runs it (its tier, name,
   and which of that name it is there), so a workspace renamed under an unchanged command, or a script changed along with
   the stage's arguments, shows what now runs, and stages of the same name in two tiers each have theirs compared;
@@ -350,6 +351,17 @@ Use an explicit message on the assertion that demonstrates the defect. The comma
 file into two temporary Git clones and runs the named test against each revision. Its JSON output records both
 commit IDs and observations. Success requires the named assertion failure on the base, with nothing else in the run failing (a teardown hook, say), and a pass on HEAD.
 Skipped tests, setup errors, other failures, and checks that pass on both revisions cannot demonstrate a fix.
+
+For a test in any other runner (Vitest, Jest, pytest, go test), give the command that runs it after `--`, and text
+the failure's output must contain:
+
+```bash
+marram replay main test/store.test.ts --expect "stored value" -- npx vitest run test/store.test.ts -t "reads one"
+```
+
+The test file is copied from HEAD into both checkouts as before, and the command runs from the project folder in each.
+Success requires the command to fail on the base with the expected text in its output, and to exit 0 on HEAD. Have the
+command run only the one test: replay can't tell another test's failure from this one's.
 
 If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
 Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.

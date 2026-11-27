@@ -318,6 +318,50 @@ test("a stage's workspace is found in each revision, so swapped package names sh
 	}
 });
 
+test("a command run in every workspace (--workspaces, -ws) has its script compared in each, and in the root when it's included", () => {
+	const repo = repository();
+	try {
+		const tiers = {
+			fast: [],
+			default: [{ name: "lint", run: ["npm", "run", "lint", "--workspaces", "--if-present"] }],
+			full: [{ name: "check", run: ["npm", "run", "check", "-ws", "--include-workspace-root"] }],
+		};
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers }));
+		repo.write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*"], scripts: { check: "node root-check.mjs" } }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { check: "node check.mjs", lint: "eslint ." } }));
+		repo.commit();
+		repo.write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*"], scripts: { check: "true" } }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { check: "true", lint: "true" } }));
+		// A workspace added under the same command: its script now runs too.
+		repo.write("packages/third/package.json", JSON.stringify({ name: "third", scripts: { lint: "true" } }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}script lint \(packages\/other\/package\.json\): true \(was eslint \.\)$/m, result.stdout);
+		assert.match(result.stdout, /^ {2}script check \(packages\/other\/package\.json\): true \(was node check\.mjs\)$/m, result.stdout);
+		assert.match(result.stdout, /^ {2}script check \(package\.json\): true \(was node root-check\.mjs\)$/m, result.stdout);
+		assert.match(result.stdout, /^ {2}script lint \(packages\/third\/package\.json\): added: true$/m, result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a workspace taken out of (or put into) package.json's workspaces, under the same --workspaces command, is reported", () => {
+	const repo = repository();
+	try {
+		const tiers = { fast: [], default: [{ name: "lint", run: ["npm", "run", "lint", "--workspaces"] }], full: [] };
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers }));
+		repo.write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*", "!packages/third"] }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { lint: "eslint ." } }));
+		repo.write("packages/third/package.json", JSON.stringify({ name: "third", scripts: { lint: "eslint src" } }));
+		repo.commit();
+		repo.write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*", "!packages/other"] }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}script lint \(packages\/other\/package\.json\): no longer run \(eslint \.\)$/m, result.stdout);
+		assert.match(result.stdout, /^ {2}script lint \(packages\/third\/package\.json\): now run: eslint src$/m, result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a configuration that prints while it loads is still read", () => {
 	const repo = repository();
 	try {
