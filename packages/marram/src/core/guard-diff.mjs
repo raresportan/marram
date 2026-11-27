@@ -9,6 +9,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkoutAt, scratchFolder } from "./checkout.mjs";
+import { FIELDS, STAGE_FIELDS } from "./config.mjs";
 import { groups } from "./gate.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { removedCitations } from "./map-diff.mjs";
@@ -206,6 +207,7 @@ function compareProject(before, now, project) {
 		lines.push(`probes ${setting} now ${value(current)} (was ${value(old)})`);
 	}
 	lines.push(...probeChanges(before, now, project, was.faults, is.faults));
+	lines.push(...otherChanges(was.raw, is.raw));
 	// Each stage known by its tier, name and which of that name it is there: tiers may reuse a stage's name.
 	const all = (gate) => TIERS.flatMap((tier) => [...occurrences(gate.tiers[tier])].map(([key, stage]) => ({ ...stage, id: `${tier} ${key}` })));
 	lines.push(...scriptChanges(before, now, project, all(was), all(is)));
@@ -236,6 +238,48 @@ function probeChanges(before, now, project, wasFaults, isFaults) {
 		const [was, is] = [patchAt(before, previous.patch), patchAt(now, fault.patch)];
 		if (is === undefined) lines.push(`probe ${name}: patch ${fault.patch} is missing`);
 		else if (was !== is && fault.patch === previous.patch) lines.push(`probe ${name}: patch ${fault.patch} changed`);
+	}
+	return lines;
+}
+
+/**
+ * Changes to what the comparisons above don't cover: a field FIELDS (config.mjs) says guard-diff reports, with its
+ * values, and a field Marram doesn't list, anywhere in the configuration, as changed, without its value, which may be a
+ * secret. A field FIELDS gives a reason for decides nothing that judges the code, and isn't reported.
+ */
+function otherChanges(was = {}, is = {}) {
+	const lines = [];
+	const value = (v) => (v === undefined ? "(none)" : v?.RegExp ?? JSON.stringify(v));
+	const isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+	/** The fields of `old` and `now` at `path` (a section, a stage, a fault), but those `covered` above. */
+	const compare = (old, now, path, known, covered) => {
+		if (JSON.stringify(old) === JSON.stringify(now)) return;
+		if (!isPlain(old ?? {}) || !isPlain(now ?? {})) return lines.push(`${path.replace(/[.: ]+$/, "")} changed`);
+		for (const field of new Set([...Object.keys(old ?? {}), ...Object.keys(now ?? {})])) {
+			const [a, b] = [old?.[field], now?.[field]];
+			if (covered.includes(field) || JSON.stringify(a) === JSON.stringify(b)) continue;
+			if (!Object.hasOwn(known, field)) lines.push(`${path}${field} changed (not a field Marram reads, so its value isn't shown)`);
+			else if (known[field] === true) lines.push(`${path}${field} now ${value(b)} (was ${value(a)})`);
+		}
+	};
+	compare(was, is, "", FIELDS.config, ["gate", "probes", "replay", "review"]);
+	compare(was.gate, is.gate, "gate.", FIELDS.gate, ["env", "tiers", "prePush"]);
+	compare(was.probes, is.probes, "probes.", FIELDS.probes, ["setup", "link", "timeoutMs", "faults"]);
+	compare(was.replay, is.replay, "replay.", FIELDS.replay, []);
+	compare(was.review, is.review, "review.", FIELDS.review, []);
+	const list = (v) => (Array.isArray(v) ? v : []);
+	for (const tier of TIERS) {
+		const stagesOf = (raw) => occurrences(list(raw?.gate?.tiers?.[tier]).map((stage) => ({ ...stage, name: String(stage?.name) })));
+		const old = stagesOf(was);
+		for (const [key, stage] of stagesOf(is)) if (old.has(key)) compare(old.get(key), stage, `${tier}: ${stage.name} `, STAGE_FIELDS, Object.keys(STAGE_FIELDS));
+	}
+	const faultsOf = (raw) => new Map(list(raw?.probes?.faults).map((fault) => [String(fault?.name), fault]));
+	const oldFaults = faultsOf(was);
+	for (const [name, fault] of faultsOf(is)) {
+		const previous = oldFaults.get(name);
+		if (previous === undefined) continue;
+		compare(previous, fault, `probe ${name}: `, FIELDS.fault, Object.keys(FIELDS.fault));
+		if (isPlain(previous.test) && isPlain(fault.test)) compare(previous.test, fault.test, `probe ${name}: test.`, FIELDS.test, Object.keys(FIELDS.test));
 	}
 	return lines;
 }
@@ -279,15 +323,17 @@ try {
 	}));
 	const { setup, link, timeoutMs } = config.probes ?? {};
 	const env = Array.isArray(gate.env) ? [...new Set(gate.env.map(String))].sort() : [];
-	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", env, faults, probes: { setup, link, timeoutMs } });
+	// All of it as well, for what guard-diff has no comparison of its own for: a RegExp as its source.
+	const raw = JSON.parse(JSON.stringify(config, (key, value) => (value instanceof RegExp ? { RegExp: String(value) } : value)) ?? "{}");
+	answer({ tiers: { fast: stages("fast"), default: stages("default"), full: stages("full") }, prePush: gate.prePush ?? "default", env, faults, probes: { setup, link, timeoutMs }, raw });
 } catch (error) {
 	answer({ error: String(error?.message ?? error).split("\\n")[0] });
 }`;
 
-/** `{ tiers, prePush, env, faults, probes }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
+/** `{ tiers, prePush, env, faults, probes, raw }` of `project` under `top` (no stages where it has no configuration), or `{ error }` saying why not. */
 function gateIn(top, project, where) {
 	const folder = join(top, project);
-	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", env: [], faults: [], probes: {} };
+	if (!existsSync(join(folder, CONFIG))) return { tiers: { fast: [], default: [], full: [] }, prePush: "default", env: [], faults: [], probes: {}, raw: {} };
 	const result = spawnSync(process.execPath, ["--input-type=module", "-e", READ_GATE, pathToFileURL(join(folder, CONFIG)).href], { cwd: folder, encoding: "utf8", timeout: 60_000, stdio: ["ignore", "ignore", "ignore", "pipe"] });
 	const answer = result.output?.[3] ? JSON.parse(result.output[3]) : { error: result.error?.message ?? "it exited without giving its gate" };
 	return answer.error === undefined ? answer : { error: `couldn't load ${CONFIG} ${where}: ${answer.error}` };

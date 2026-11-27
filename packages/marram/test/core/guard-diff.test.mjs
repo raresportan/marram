@@ -606,3 +606,76 @@ test("guard-diff reports a test now run alone, and not a test helper moved or re
 		repo.remove();
 	}
 });
+
+// Two values for each field Marram reads (config.mjs's FIELDS and STAGE_FIELDS), so each can be changed on its own. A
+// field added to those tables without values here fails the test below: say what guard-diff does with it first.
+const SAMPLES = {
+	gate: { logs: ["logs", "other-logs"], keep: [20, 5], progress: [/^ok/, /^fine/], sleepGapMs: [30_000, 1], env: [["CI"], ["CI", "NODE_ENV"]], prePush: ["default", "full"] },
+	probes: { setup: [["npm", "ci"], ["npm", "install"]], link: [["node_modules"], []], timeoutMs: [300_000, 1000] },
+	fault: { name: ["rollback", "no rollback"], patch: ["probes/a.patch", "probes/b.patch"], run: [["npm", "test"], ["npm", "run", "verify"]], expect: [/balance/, "balance"], cwd: ["app", "."] },
+	test: { file: ["test/a.test.mjs", "test/b.test.mjs"], name: ["keeps it", "keeps that"], assertion: ["kept", "still kept"] },
+	replay: { setup: [["npm", "ci"], ["npm", "install"]], timeoutMs: [300_000, 1000] },
+	review: { classes: ["docs/classes.md", "docs/other.md"], rungs: [["unit"], ["unit", "lint"]], subjects: [/review findings/, /findings/] },
+	stage: { name: ["second", "renamed"], run: [["npm", "test"], ["npm", "run", "check"]], env: [{ A: "1" }, { A: "2" }], concurrent: [false, true] },
+};
+
+/** A config as module source: a RegExp as itself, so the config gives one. */
+const source = (value) => (value instanceof RegExp ? String(value)
+	: Array.isArray(value) ? `[${value.map(source).join(", ")}]`
+		: value !== null && typeof value === "object" ? `{ ${Object.entries(value).map(([key, v]) => `${JSON.stringify(key)}: ${source(v)}`).join(", ")} }`
+			: JSON.stringify(value));
+
+test("guard-diff reports a change to each field config.mjs says it reports, and only those, and a field Marram doesn't read as changed", async () => {
+	const { FIELDS, STAGE_FIELDS } = await import("../../src/core/config.mjs");
+	const sections = Object.keys(FIELDS).filter((section) => section !== "config");
+	assert.deepEqual(Object.keys(FIELDS.config).filter((section) => section !== "gate" && section !== "probes").sort(), ["replay", "review"], "a new section needs its samples and a place in config below");
+	for (const section of [...sections, "stage"]) {
+		const known = section === "stage" ? STAGE_FIELDS : FIELDS[section];
+		// Each section holding others has its fields sampled in theirs: a stage's, a fault's and a fault's test.
+		const holds = { gate: "tiers", probes: "faults", fault: "test" }[section];
+		for (const field of Object.keys(known)) if (field !== holds && !SAMPLES[section]?.[field]) assert.fail(`SAMPLES has no values for ${section}.${field}`);
+	}
+	const pick = (section, i) => Object.fromEntries(Object.entries(SAMPLES[section]).map(([field, values]) => [field, values[i]]));
+	const config = (change = {}) => {
+		const { section, field, value } = change;
+		const at = (name, base) => (section === name ? { ...base, [field]: value } : base);
+		const stage = at("stage", pick("stage", 0));
+		const fault = { ...at("fault", pick("fault", 0)), test: at("test", pick("test", 0)) };
+		return {
+			...(section === "config" ? { [field]: value } : {}),
+			gate: { ...at("gate", pick("gate", 0)), tiers: { fast: [], default: [{ name: "first", run: ["npm", "run", "build"], concurrent: true }, stage], full: [] } },
+			probes: { ...at("probes", pick("probes", 0)), faults: [fault] },
+			replay: at("replay", pick("replay", 0)),
+			review: at("review", pick("review", 0)),
+		};
+	};
+	const repo = repository();
+	try {
+		for (const patch of SAMPLES.fault.patch) repo.write(patch, "");
+		repo.write("marram.config.mjs", `export default ${source(config())};`);
+		repo.commit();
+		const report = (change) => {
+			repo.write("marram.config.mjs", `export default ${source(config(change))};`);
+			const result = repo.diff();
+			assert.equal(result.status, 0, result.stderr);
+			return result.stdout;
+		};
+		const nothing = /^No guard changes since/m;
+		for (const section of [...sections, "stage"]) {
+			const known = section === "stage" ? STAGE_FIELDS : FIELDS[section];
+			for (const [field, values] of Object.entries(SAMPLES[section])) {
+				const out = report({ section, field, value: values[1] });
+				const reported = section === "stage" || known[field] === true;
+				if (reported) assert.doesNotMatch(out, nothing, `a change to ${section}.${field} is reported`);
+				else assert.match(out, nothing, `${section}.${field} ${known[field]}, so a change to it isn't reported`);
+			}
+		}
+		for (const section of ["config", "gate", "probes", "fault", "test", "replay", "review", "stage"]) {
+			const out = report({ section, field: "unheardOf", value: "a-secret-value" });
+			assert.match(out, /unheardOf changed \(not a field Marram reads, so its value isn't shown\)/, `an unknown field in ${section} is reported`);
+			assert.doesNotMatch(out, /a-secret-value/);
+		}
+	} finally {
+		repo.remove();
+	}
+});
