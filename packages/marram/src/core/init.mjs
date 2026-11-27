@@ -10,7 +10,7 @@
 // `marram doctor` says what's still missing.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const BIN = "node_modules/@raresportan/marram/bin/marram.mjs";
 const FAST = ["typecheck", "lint"];
@@ -122,6 +122,13 @@ export function setUp(from = process.cwd()) {
 		done.push("set core.hooksPath to .githooks");
 	}
 	const shown = posix(set ?? ".githooks");
+	// A hooks folder outside the repository (a global core.hooksPath, say) may be every repository's: a hook written there
+	// would gate pushes in all of them, with this project's paths.
+	const offset = relative(top, hooks);
+	if (offset === ".." || offset.startsWith(`..${sep}`) || isAbsolute(offset)) {
+		done.push(`core.hooksPath is ${shown}, outside this repository, so other repositories may run its hooks too: no pre-push written there. Add \`marram hook pre-push\` to its pre-push yourself, or give this repository its own (\`git config core.hooksPath .githooks\`) and run \`marram init\` again`);
+		return done;
+	}
 	const prePush = join(hooks, "pre-push");
 	if (existsSync(prePush)) {
 		const runs = /\bhook pre-push\b/.test(readFileSync(prePush, "utf8"));

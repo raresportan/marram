@@ -95,6 +95,21 @@ test("init leaves core.hooksPath alone when git already runs hooks of its own", 
 	}
 });
 
+test("init writes no hook into a hooks folder outside the repository, which other repositories may share", () => {
+	const repo = repository();
+	const shared = realpathSync(mkdtempSync(join(tmpdir(), "marram-shared-hooks-")));
+	try {
+		// A global core.hooksPath: every repository on the machine runs its hooks from there.
+		repo.git("config", "--global", "core.hooksPath", shared);
+		const result = repo.marram(repo.root, "init");
+		assert.match(result.stdout, /core\.hooksPath is .*, outside this repository, so other repositories may run its hooks too: no pre-push written there/);
+		assert.ok(!existsSync(join(shared, "pre-push")));
+	} finally {
+		repo.remove();
+		rmSync(shared, { recursive: true, force: true });
+	}
+});
+
 test("a project in a folder of the repository gets a hook that gates it from its folder, with Marram from its node_modules", () => {
 	const repo = repository();
 	try {
