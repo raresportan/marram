@@ -29,7 +29,7 @@ export function isTestFile(path) {
 export function testsIn(path, source) {
 	const language = languageOf(path);
 	if (language === undefined) return undefined;
-	const tests = { js: javascript, python, go }[language](source);
+	const tests = { js: javascript, python, go }[language](path, source);
 	const seen = new Map();
 	return tests.map((found) => {
 		const count = (seen.get(found.name) ?? 0) + 1;
@@ -45,18 +45,25 @@ const CLOSE = "\u0003";
  * `source` with its comments taken out, each string or template literal replaced by OPEN + its index + CLOSE, and each
  * regular expression literal by "R", so brackets and calls can be found in what's left. `strings` holds the literals'
  * text. A template's `${…}` stays in its text. With `go`, a backtick string is raw (no escapes, no `${…}`) and there
- * are no regular expression literals.
+ * are no regular expression literals. With `jsx`, a JSX element is replaced by "J": its text isn't code, and a quote or
+ * a slash in it (`<p>Don't</p>`) would otherwise read as a string or a regular expression that swallows brackets.
  */
-function masked(source, { go = false } = {}) {
+function masked(source, { go = false, jsx = false } = {}) {
 	let code = "";
 	const strings = [];
 	let i = 0;
 	const previous = () => code.trimEnd().slice(-1);
 	const previousWord = () => /(\w+)\s*$/.exec(code)?.[1];
+	// Where an expression can start: a slash there starts a regular expression, and a `<` a JSX element.
+	const expressionStarts = () => previous() === "" || "(,=:[!&|?{};+-*%<>~^".includes(previous()) || ["return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "yield", "await", "else", "do", "default"].includes(previousWord());
+	let element;
 	while (i < source.length) {
 		const c = source[i];
 		const next = source[i + 1];
-		if (c === "/" && next === "/") {
+		if (c === "<" && jsx && expressionStarts() && (element = jsxEnd(source, i)) !== -1) {
+			code += "J";
+			i = element;
+		} else if (c === "/" && next === "/") {
 			while (i < source.length && source[i] !== "\n") i++;
 		} else if (c === "/" && next === "*") {
 			const end = source.indexOf("*/", i + 2);
@@ -88,7 +95,7 @@ function masked(source, { go = false } = {}) {
 			}
 			i++;
 			code += OPEN + (strings.push(text) - 1) + CLOSE;
-		} else if (c === "/" && !go && (previous() === "" || "(,=:[!&|?{};+-*%<>~^".includes(previous()) || ["return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "yield", "await", "else", "do"].includes(previousWord()))) {
+		} else if (c === "/" && !go && expressionStarts()) {
 			let inClass = false;
 			for (i++; i < source.length && source[i] !== "\n"; i++) {
 				if (source[i] === "\\") i++;
@@ -104,6 +111,101 @@ function masked(source, { go = false } = {}) {
 		}
 	}
 	return { code, strings };
+}
+
+/**
+ * The index just past the JSX element that starts at `start` (its `<`), or -1 where what starts there isn't one: a
+ * TypeScript generic (`<T,>(x: T) => x`), a type assertion, an element never closed.
+ */
+function jsxEnd(source, start) {
+	const NAME = /[A-Za-z_$][\w$.:-]*/y;
+	const word = (at) => {
+		NAME.lastIndex = at;
+		return NAME.exec(source)?.[0];
+	};
+	const space = (at) => {
+		while (/\s/.test(source[at] ?? "")) at++;
+		return at;
+	};
+	/** Past the `{…}` at `at`: an expression, its strings and its own elements skipped whole. */
+	const container = (at) => {
+		let depth = 0;
+		let last = "";
+		for (let i = at; i < source.length; i++) {
+			const c = source[i];
+			if (source.startsWith("/*", i)) {
+				const end = source.indexOf("*/", i + 2);
+				if (end === -1) return -1;
+				i = end + 1;
+				continue;
+			}
+			if (source.startsWith("//", i)) {
+				while (i < source.length && source[i] !== "\n") i++;
+				continue;
+			}
+			if (c === '"' || c === "'" || c === "`") {
+				for (i++; i < source.length && source[i] !== c; i++) if (source[i] === "\\") i++;
+			} else if (c === "<" && "({[,=:?&|>".includes(last)) {
+				const end = element(i);
+				if (end === -1) return -1;
+				i = end - 1;
+			} else if (c === "{") depth++;
+			else if (c === "}" && --depth === 0) return i + 1;
+			if (!/\s/.test(c)) last = c;
+		}
+		return -1;
+	};
+	/** Past an attribute's value or a child's `{…}` or element at `at`. */
+	const value = (at) => {
+		const c = source[at];
+		if (c === '"' || c === "'") {
+			const end = source.indexOf(c, at + 1);
+			return end === -1 ? -1 : end + 1;
+		}
+		if (c === "{") return container(at);
+		if (c === "<") return element(at);
+		return -1;
+	};
+	function element(at) {
+		let i = space(at + 1);
+		const tag = source[i] === ">" ? "" : word(i);
+		if (tag === undefined) return -1;
+		i += tag.length;
+		// Its attributes, to the end of its opening tag.
+		for (;;) {
+			i = space(i);
+			if (source.startsWith("/>", i)) return i + 2;
+			if (source[i] === ">") break;
+			if (source[i] === "{") {
+				i = container(i);
+				if (i === -1) return -1;
+				continue;
+			}
+			const attribute = word(i);
+			if (attribute === undefined) return -1;
+			i = space(i + attribute.length);
+			if (source[i] === "=") {
+				i = value(space(i + 1));
+				if (i === -1) return -1;
+			}
+		}
+		// Its children, text and all, to its closing tag.
+		for (i++; i < source.length; ) {
+			if (source.startsWith("</", i)) {
+				i = space(i + 2);
+				const closing = source[i] === ">" ? "" : word(i);
+				if (closing !== tag) return -1;
+				i = space(i + tag.length);
+				return source[i] === ">" ? i + 1 : -1;
+			}
+			if (source[i] === "{" || source[i] === "<") {
+				i = value(i);
+				if (i === -1) return -1;
+			} else i++;
+		}
+		return -1;
+	}
+	return element(start);
 }
 
 /** The index of the bracket that closes the one at `open` in masked code, or the end. */
@@ -124,18 +226,36 @@ const count = (text, pattern) => text.match(pattern)?.length ?? 0;
  * and .only, f and { only } to run one alone. A call on something (`pattern.test("abc")`) is a method, not a test,
  * unless it's on an enclosing test's context, as node:test's subtests are (`t.test("…")` in `(t) => …`).
  */
-function javascript(source) {
-	const { code, strings } = masked(source);
+function javascript(path, source) {
+	// JSX, but not in TypeScript's own .ts files, where `<T>value` is a type assertion.
+	const { code, strings } = masked(source, { jsx: !/\.[mc]?ts$/.test(path) });
 	const calls = [];
-	const call = new RegExp(`\\b([xf]?)(describe|suite|context|test|it|specify)((?:\\s*\\.\\s*\\w+)*)\\s*\\(\\s*${OPEN}(\\d+)${CLOSE}`, "g");
+	const call = /\b([xf]?)(describe|suite|context|test|it|specify)((?:\s*\.\s*\w+)*)\s*/g;
+	// What follows the call's name: the opening bracket and the test's name.
+	const named = new RegExp(`\\(\\s*${OPEN}(\\d+)${CLOSE}`, "y");
+	const table = new RegExp(`${OPEN}\\d+${CLOSE}\\s*`, "y");
 	const unless = (option) => new RegExp(`\\b${option}\\s*:(?!\\s*(?:false|0|null|undefined)\\b)`);
 	for (const match of code.matchAll(call)) {
 		const chain = match[3].split(".").map((part) => part.trim()).filter(Boolean);
-		if (chain.includes("each")) continue;
+		let at = match.index + match[0].length;
+		// A parameterized test, `test.each(rows)("name %i", fn)` or with a template of rows, Vitest's `test.for` too: one
+		// test, named by its template.
+		if (["each", "for"].includes(chain.at(-1))) {
+			if (code[at] === "(") at = closing(code, at) + 1;
+			else {
+				table.lastIndex = at;
+				if (!table.test(code)) continue;
+				at = table.lastIndex;
+			}
+			at += /^\s*/.exec(code.slice(at, at + 200))[0].length;
+		} else if (chain.includes("each") || chain.includes("for")) continue;
+		named.lastIndex = at;
+		const name = named.exec(code);
+		if (name === null) continue;
 		const before = code.slice(0, match.index).trimEnd();
-		const open = match.index + match[0].lastIndexOf("(");
+		const open = at;
 		const close = closing(code, open);
-		const args = code.slice(match.index + match[0].length, close);
+		const args = code.slice(named.lastIndex, close);
 		// The callback is whatever comes first, an arrow or a function; options come before it.
 		const arrow = args.indexOf("=>");
 		const fn = args.search(/\bfunction\b/);
@@ -146,7 +266,7 @@ function javascript(source) {
 			: /^function\b\s*\w*\s*\(\s*(\w+)/.exec(args.slice(callback))?.[1];
 		calls.push({
 			suite: ["describe", "suite", "context"].includes(match[2]),
-			name: strings[Number(match[4])],
+			name: strings[Number(name[1])],
 			receiver: before.endsWith(".") ? (/(\w+)\s*\.$/.exec(before)?.[1] ?? "") : undefined,
 			param,
 			open,
@@ -170,7 +290,7 @@ function javascript(source) {
 }
 
 /** Go: func TestX(t *testing.T), skipped by a t.Skip in its body, its assertions t.Error…, t.Fatal…, assert. and require. */
-function go(source) {
+function go(_path, source) {
 	const { code } = masked(source, { go: true });
 	const tests = [];
 	for (const match of code.matchAll(/\bfunc\s+(Test\w*)\s*\(\s*(\w+)\s+\*testing\.T\s*\)\s*\{/g)) {
@@ -187,11 +307,12 @@ function go(source) {
 }
 
 /** pytest and unittest: def test_… at the top or in a class, skipped by a skip, skipif or xfail decorator on it or its class. */
-function python(source) {
+function python(_path, source) {
 	const lines = pythonLines(source);
 	const tests = [];
 	const classes = [];
 	let decorators = [];
+	const depth = (line) => count(line, /[([{]/g) - count(line, /[)\]}]/g);
 	const skips = (list) => list.some((decorator) => /\b(skip|skipif|skipIf|skipUnless|xfail)\b/.test(decorator));
 	for (let i = 0; i < lines.length; i++) {
 		const { indent, text } = lines[i];
@@ -199,7 +320,6 @@ function python(source) {
 		if (text.startsWith("@")) {
 			// A decorator can run over several lines, as long as a bracket is open.
 			let decorator = text;
-			const depth = (line) => count(line, /[([{]/g) - count(line, /[)\]}]/g);
 			while (depth(decorator) > 0 && i + 1 < lines.length) decorator += " " + lines[++i].text;
 			decorators.push(decorator);
 			continue;
@@ -210,6 +330,9 @@ function python(source) {
 		} else {
 			const def = /^(?:async\s+)?def\s+(test\w*)\s*\(/.exec(text);
 			if (def) {
+				// Its signature can run over several lines too, its closing bracket back at the def's own indent.
+				let signature = text;
+				while (depth(signature) > 0 && i + 1 < lines.length) signature += " " + lines[++i].text;
 				let end = i + 1;
 				while (end < lines.length && lines[end].indent > indent) end++;
 				const body = lines.slice(i + 1, end).map((line) => line.text);

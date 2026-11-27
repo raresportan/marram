@@ -183,3 +183,76 @@ test("a Go raw string is raw: a backslash at its end doesn't swallow the tests a
 	].join("\n");
 	assert.deepEqual(summary("a_test.go", source), ["TestPath: 1", "TestTemplate: 1", "TestLast: 1"]);
 });
+
+test("a parameterized test (.each, .for) is one test named by its template, with its skips and assertions", () => {
+	const source = `
+test.each([
+	[1, 1, 2],
+	[1, (2), 3],
+])("adds %i + %i", (a, b, sum) => {
+	expect(add(a, b)).toBe(sum);
+});
+it.each\`
+	a    | b
+	\${1} | \${2}
+\`("table $a", ({ a, b }) => expect(a).toBeLessThan(b));
+describe.each([[1], [2]])("suite %i", (n) => {
+	it.skip.each([3])("inner %i", (m) => assert.ok(n < m));
+});
+test.only.each([1])("alone %i", (n) => assert.ok(n));
+test.for([1, 2])("vitest for %i", ([n]) => expect(n).toBeTruthy());
+const rows = table.each([1]);
+`;
+	assert.deepEqual(summary("a.test.ts", source), [
+		"adds %i + %i: 1",
+		"table $a: 1",
+		"suite %i › inner %i (skipped): 1",
+		"alone %i (only): 1",
+		"vitest for %i: 1",
+	]);
+});
+
+test("JSX in a test file doesn't hide the tests after it", () => {
+	const source = `
+import { render } from "@testing-library/react";
+const Hint = () => <p className="hint">Don't click / tap (twice)</p>;
+test("renders the hint", () => {
+	render(<div>{/* don't */}{cond ? <Hint /> : <></>}<a href="/x">it's {"here"}</a></div>);
+	expect(screen.getByText(/click/)).toBeTruthy();
+});
+const pick = <T,>(items: T[]) => items[0];
+test("renders a list", () => {
+	const view = render(
+		<ul>
+			<li key="a">a {\`b\`}</li>
+		</ul>,
+	);
+	expect(view).toBeTruthy();
+	expect(pick([1])).toBe(1);
+});
+const small = count < limit;
+test("after a comparison", () => assert.ok(small));
+`;
+	assert.deepEqual(summary("a.test.tsx", source), ["renders the hint: 1", "renders a list: 2", "after a comparison: 1"]);
+});
+
+test("a Python test whose signature runs over several lines has its body's assertions counted", () => {
+	const source = `
+def test_reads(
+    client,
+    tmp_path,
+):
+    assert client.get("/") == 200
+    assert tmp_path.exists()
+
+class TestThing:
+    async def test_method(
+        self, fixture
+    ) -> None:
+        self.assertTrue(fixture)
+
+def test_after():
+    assert True
+`;
+	assert.deepEqual(summary("test_a.py", source), ["test_reads: 2", "TestThing › test_method: 1", "test_after: 1"]);
+});
