@@ -7,7 +7,7 @@
 // Windows, taskkill ends the command's whole tree. An interruption (Ctrl-C, a hook's timeout) is passed on to the
 // group, which no longer gets the terminal's own. The supervisor says how the command ended on file descriptor 3.
 import { spawn, spawnSync } from "node:child_process";
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 
 const GRACE_MS = 5_000;
 const WINDOWS = process.platform === "win32";
@@ -18,12 +18,15 @@ const WINDOWS = process.platform === "win32";
  * it goes to this process's stderr. `options` are spawn's (cwd, env, windowsVerbatimArguments).
  */
 export function runBounded(file, args, { timeout, capture = false, ...options }) {
+	// On stdin rather than the command line, where `ps` would show an env's values (secrets, say) and Windows limits
+	// the length.
 	const spec = JSON.stringify({ file, args, timeout, options });
-	const supervisor = spawnSync(process.execPath, [import.meta.filename, spec], {
+	const supervisor = spawnSync(process.execPath, [import.meta.filename, "--supervise"], {
 		cwd: options.cwd,
 		encoding: "utf8",
+		input: spec,
 		maxBuffer: 64 * 1024 * 1024,
-		stdio: ["ignore", capture ? "pipe" : 2, capture ? "pipe" : 2, "pipe"],
+		stdio: ["pipe", capture ? "pipe" : 2, capture ? "pipe" : 2, "pipe"],
 		// Only if the supervisor itself never returns.
 		timeout: timeout + GRACE_MS + 30_000,
 		killSignal: "SIGKILL",
@@ -58,6 +61,7 @@ function supervise({ file, args, timeout, options }) {
 		}
 	};
 	let timedOut = false;
+	let interrupted = false;
 	const timer = setTimeout(() => {
 		timedOut = true;
 		stop("SIGTERM");
@@ -65,6 +69,7 @@ function supervise({ file, args, timeout, options }) {
 	}, timeout);
 	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 		process.on(signal, () => {
+			interrupted = true;
 			stop(signal);
 			setTimeout(() => stop("SIGKILL"), GRACE_MS).unref();
 		});
@@ -76,11 +81,12 @@ function supervise({ file, args, timeout, options }) {
 	});
 	child.on("exit", (status, signal) => {
 		clearTimeout(timer);
-		// What the command started and left running would keep its output open, and the caller waiting.
-		if (timedOut) stop("SIGKILL");
+		// What the command started and left running, after a timeout or an interruption, would keep its output open and
+		// the caller waiting.
+		if (timedOut || interrupted) stop("SIGKILL");
 		report({ status, signal, timedOut });
 		process.exit(0);
 	});
 }
 
-if (process.argv[1] === import.meta.filename) supervise(JSON.parse(process.argv[2]));
+if (process.argv[1] === import.meta.filename && process.argv[2] === "--supervise") supervise(JSON.parse(readFileSync(0, "utf8")));

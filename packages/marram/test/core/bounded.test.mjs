@@ -1,7 +1,10 @@
 // A command run for at most a given time: stopped at it, even one that ignores SIGTERM and leaves a process holding its
 // output. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { runBounded } from "../../src/core/bounded.mjs";
 
@@ -23,4 +26,42 @@ test("a command that ignores SIGTERM, with a child that does too and holds its o
 	assert.notEqual(result.error?.code, "ETIMEDOUT", "runBounded hung");
 	assert.deepEqual(JSON.parse(result.stdout), { code: "ETIMEDOUT" });
 	assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
+});
+
+const BOUNDED = new URL("../../src/core/bounded.mjs", import.meta.url).href;
+const POSIX = { skip: process.platform === "win32" && "reads ps and signals a process group" };
+
+test("the command's env isn't on the supervisor's command line", POSIX, () => {
+	// The command reads its parent's (the supervisor's) command line, as ps shows it to anyone on the machine.
+	const shown = 'console.log(require("node:child_process").execFileSync("ps", ["-o", "args=", "-p", String(process.ppid)], { encoding: "utf8" }))';
+	const result = runBounded(process.execPath, ["-e", shown], { timeout: 10_000, capture: true, env: { ...process.env, TOKEN: "synthetic-secret-value" } });
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /--supervise/);
+	assert.doesNotMatch(result.stdout, /synthetic-secret-value/);
+});
+
+test("an interrupted supervisor kills what the command left running, so its caller returns", POSIX, async () => {
+	const folder = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// The command notes the supervisor's pid, then starts a child that ignores SIGTERM and holds its stdout; it doesn't.
+		const marker = join(folder, "supervisor");
+		const child = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);';
+		const command = `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.ppid)); require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { stdio: "inherit" }); setInterval(() => {}, 1000);`;
+		const caller = spawn(process.execPath, ["--input-type=module", "-e", `import { runBounded } from ${JSON.stringify(BOUNDED)};\nrunBounded(process.execPath, ["-e", ${JSON.stringify(command)}], { timeout: 60_000, capture: true });`], { stdio: "ignore" });
+		const exited = new Promise((done) => caller.on("exit", done));
+		const until = Date.now() + 15_000;
+		while (!existsSync(marker) || readFileSync(marker, "utf8") === "") {
+			assert.ok(Date.now() < until, "the command never started");
+			await new Promise((done) => setTimeout(done, 50));
+		}
+		const started = Date.now();
+		process.kill(Number(readFileSync(marker, "utf8")), "SIGTERM");
+		const deadline = new Promise((done) => setTimeout(() => done("hung"), 20_000).unref());
+		const outcome = await Promise.race([exited.then(() => "returned"), deadline]);
+		if (outcome === "hung") caller.kill("SIGKILL");
+		assert.equal(outcome, "returned", "the caller waited on the left-over child");
+		assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started} ms`);
+	} finally {
+		rmSync(folder, { recursive: true, force: true });
+	}
 });
