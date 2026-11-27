@@ -187,6 +187,30 @@ test("a test that doesn't finish in replay.timeoutMs is stopped, with what it st
 	}
 });
 
+test("a setup that handles SIGTERM and carries on is killed after a grace period, so replay still returns", () => {
+	const repo = repository();
+	try {
+		const stubborn = ["node", "-e", 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'];
+		writeFileSync(join(repo.root, "marram.config.mjs"), `export default { replay: { setup: ${JSON.stringify(stubborn)}, timeoutMs: 500 } }`);
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 0");
+		const base = repo.commit();
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 1");
+		writeFileSync(join(repo.root, "probe.cjs"), PROBE);
+		repo.commit();
+		const started = Date.now();
+		// Bounded here too, so a replay that hangs fails this test rather than the run.
+		const { NODE_TEST_CONTEXT, ...env } = process.env;
+		const result = spawnSync(process.execPath, [fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url)), "replay", base, "probe.cjs", "reads one", "stored value"], { cwd: repo.root, env, encoding: "utf8", timeout: 40_000, killSignal: "SIGKILL" });
+		assert.notEqual(result.error?.code, "ETIMEDOUT", "replay hung on a setup that ignores SIGTERM");
+		assert.ok(Date.now() - started < 30_000, `replay took ${Date.now() - started} ms`);
+		const { base: before, candidate } = JSON.parse(result.stdout);
+		assert.equal(before.detail, "Setup didn't finish within 500 ms");
+		assert.equal(candidate.detail, "Setup didn't finish within 500 ms");
+	} finally {
+		repo.remove();
+	}
+});
+
 test("replay refuses a timeout that isn't a positive number of milliseconds", () => {
 	const repo = repository();
 	try {

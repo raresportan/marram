@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
+import { runBounded } from "./bounded.mjs";
 
 // As a URL: run in the runner's process, the reporter and the test file are loaded with import(), which takes a
 // Windows path (D:\…) for a URL with a "d:" scheme.
@@ -25,7 +26,7 @@ function inRunner() {
 export function runNamedTest({ cwd, file, name, assertion, output, timeout }) {
 	const pattern = "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
 	const target = isAbsolute(file) ? relative(cwd, file) : file;
-	const run = spawnSync(process.execPath, ["--test", inRunner(), "--test-reporter", reporter, "--test-reporter-destination", output, "--test-name-pattern", pattern, target], { cwd, stdio: ["ignore", 2, 2], timeout });
+	const run = runBounded(process.execPath, ["--test", inRunner(), "--test-reporter", reporter, "--test-reporter-destination", output, "--test-name-pattern", pattern, target], { cwd, timeout });
 	if (run.error?.code === "ETIMEDOUT") return { state: "inconclusive", detail: `The test didn't finish within ${timeout} ms` };
 	if (run.error || run.status === null) return { state: "inconclusive", detail: run.error?.message ?? "The test didn't finish" };
 	const rows = existsSync(output) ? readFileSync(output, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
