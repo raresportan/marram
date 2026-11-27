@@ -86,8 +86,8 @@ function hooksIn(repo, cwd, flags) {
 }
 
 /**
- * `folder`'s path from the top of the work tree of `repo`, or undefined when it isn't in it (another repository, or
- * .git itself). Git names it, from the nearest folder that exists, so a path spelled through a link or a Windows short
+ * `folder`'s path from the top of the work tree of `repo`, or undefined when it isn't in it (another repository,
+ * another worktree of this one, or .git itself). Git names it, from the nearest folder that exists, so a path spelled through a link or a Windows short
  * name (RUNNER~1) is still found inside, and so is a folder the branch deleted.
  */
 function fromTop(repo, folder) {
@@ -98,13 +98,16 @@ function fromTop(repo, folder) {
 		if (dirname(existing) === existing) return undefined;
 		existing = dirname(existing);
 	}
+	// Inside .git, rev-parse succeeds with an empty prefix, as at the top: only a folder in the work tree has a path from it.
+	const inWorkTree = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: existing, encoding: "utf8" });
+	if (inWorkTree.status !== 0 || inWorkTree.stdout.trim() !== "true" || gitDir(existing) !== gitDir(repo)) return undefined;
 	const prefix = spawnSync("git", ["rev-parse", "--show-prefix"], { cwd: existing, encoding: "utf8" });
-	if (prefix.status !== 0 || commonDir(existing) !== commonDir(repo)) return undefined;
+	if (prefix.status !== 0) return undefined;
 	return posix.join(prefix.stdout.trim(), ...missing).replace(/\/$/, "") || ".";
 }
 
-/** The repository's own folder (the common .git), the same from anywhere in it and its worktrees. */
-const commonDir = (cwd) => git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
+/** The work tree's own git folder: .git, or .git/worktrees/<name> for another worktree of the same repository. */
+const gitDir = (cwd) => git(cwd, "rev-parse", "--absolute-git-dir");
 
 /**
  * Test files changed since the merge base (checked out in `before`), read on both sides: tests removed, newly skipped,

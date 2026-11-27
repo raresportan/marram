@@ -231,6 +231,27 @@ test("hooks are compared where a fresh checkout has none configured (--hooks), a
 		assert.match(absolute.stdout, /^Hooks \(\.githooks\)\n {2}changed pre-push$/m);
 		assert.equal(absolute.stdout.match(/^Hooks/gm).length, 1, "the same folder, named twice, is compared once");
 
+		// .git/hooks is git's own, not in the work tree, so not compared; nor read as the work tree's top.
+		for (const own of [join(repo.root, ".git", "hooks"), join(repo.root, ".git", "hooks", "gone")]) {
+			git("config", "core.hooksPath", own);
+			const result = repo.diff();
+			assert.doesNotMatch(result.stdout, /^Hooks \(\.\)|^Hooks \(gone\)/m, result.stdout);
+			assert.match(result.stdout, /^Hooks \(.*\.git.*\)\n {2}outside the repository, so not compared/m);
+		}
+
+		// Another worktree of the same repository has its own files, which aren't this branch's.
+		const sibling = join(mkdtempSync(join(tmpdir(), "marram-worktree-")), "other");
+		try {
+			git("worktree", "add", "-q", sibling, "main");
+			git("config", "core.hooksPath", join(sibling, ".githooks"));
+			const result = repo.diff();
+			assert.doesNotMatch(result.stdout, /^Hooks \(\.githooks\)/m, result.stdout);
+			assert.match(result.stdout, /^Hooks \(.*other.*\)\n {2}outside the repository, so not compared/m);
+		} finally {
+			git("worktree", "remove", "--force", sibling);
+			rmSync(join(sibling, ".."), { recursive: true, force: true });
+		}
+
 		const elsewhere = mkdtempSync(join(tmpdir(), "marram-hooks-"));
 		try {
 			git("config", "core.hooksPath", elsewhere);

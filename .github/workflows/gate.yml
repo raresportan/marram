@@ -88,10 +88,12 @@ jobs:
         run: |
           printf 'guard-diff failed, so the guard changes are unknown: see the "Guard changes" job in the run.\n' > guard-diff.txt
       - name: Show them in the run's summary
-        if: always()
+        # Not when the run was cancelled, which leaves nothing to report.
+        if: success() || failure()
         run: .github/scripts/guard-diff-report.sh summary guard-diff.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Leave them for the comment
-        if: always()
+        # Not when the run was cancelled, which leaves nothing to report.
+        if: success() || failure()
         env:
           PR: ${{ github.event.pull_request.number }}
         run: |
@@ -99,7 +101,8 @@ jobs:
           cp guard-diff.txt guard-report/
           printf '%s\n' "$PR" > guard-report/pr
       - uses: actions/upload-artifact@v4
-        if: always()
+        # Not when the run was cancelled, which leaves nothing to report.
+        if: success() || failure()
         with:
           name: guard-report
           path: guard-report/
