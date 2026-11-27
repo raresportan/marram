@@ -311,9 +311,10 @@ changed in its guards since the merge base:
   `env`;
 - `env` changes, by variable name only, since a value may be a token;
 - `gate.prePush`, and the inherited variables `gate.env` stops or starts counting for reusing a pass;
-- the `package.json` scripts a stage runs, including through `-w` and, for npm, the `pre` and `post` scripts around
-  them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
-  unchanged command, or a script changed along with the stage's arguments, shows what now runs;
+- the `package.json` scripts a stage runs, in each workspace its command names with `-w` and, for npm, the `pre` and
+  `post` scripts around them. Each is found in its own revision and matched by the stage that runs it (its tier, name,
+  and which of that name it is there), so a workspace renamed under an unchanged command, or a script changed along with
+  the stage's arguments, shows what now runs, and stages of the same name in two tiers each have theirs compared;
 - the files in `core.hooksPath`, and in each `--hooks <folder>` given, tracked or not. A fresh checkout, as in CI, has
   no `core.hooksPath`, so CI names the folder. Hooks outside the repository are listed as not compared;
 - probes: faults removed or added, a field of one changed, or its patch's contents, and the `setup`, `link` and
