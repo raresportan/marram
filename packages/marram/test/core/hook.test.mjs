@@ -129,6 +129,8 @@ test("a full pass counts for the default gate only when it ran the default stage
 		"the default stages in another order": { default: [stage("d"), stage("f")], full: [stage("f"), stage("d")] },
 		// Run together, e's test could read d's build from before: the default gate runs e after d.
 		"the default stages run together": { default: [stage("d"), stage("e")], full: [{ ...stage("d"), concurrent: true }, { ...stage("e"), concurrent: true }] },
+		// Marked the same in both, but a stage between them in full splits their group: run apart there, together by default.
+		"the default's group split in the full gate": { default: [{ ...stage("d"), concurrent: true }, { ...stage("e"), concurrent: true }], full: [{ ...stage("d"), concurrent: true }, stage("x"), { ...stage("e"), concurrent: true }] },
 	};
 	for (const [difference, tiers] of Object.entries(unlike)) {
 		const repo = project({ tiers: { fast: [], ...tiers } });

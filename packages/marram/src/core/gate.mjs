@@ -98,16 +98,27 @@ export async function startRun(logs, tier, date = new Date()) {
 }
 
 /**
- * Whether the full tier runs each default stage, in order, with the same command, arguments and environment; other
- * stages may come between them. Tiers are the project's, so a full gate needn't contain the default one, and its pass
- * then says nothing about the default gate.
+ * Whether the full tier runs each default stage, in order, with the same command, arguments and environment, and runs
+ * together exactly the default stages the default tier runs together; other stages may come between them. A stage
+ * between two marked ones in full splits their group, so they run apart there and together by default, where one may
+ * break the other. Tiers are the project's, so a full gate needn't contain the default one, and its pass then says
+ * nothing about the default gate.
  */
-function ranDefault(tiers) {
-	if (!Array.isArray(tiers.default)) return false;
+export function ranDefault(tiers) {
+	if (!Array.isArray(tiers.default) || !Array.isArray(tiers.full)) return false;
 	const wanted = tiers.default.map(stageText);
 	let found = 0;
-	for (const stage of tiers.full.map(stageText)) if (stage === wanted[found]) found++;
-	return found === wanted.length;
+	// The full tier's groups, each narrowed to the default stages in it, by their place in the default tier.
+	const ran = [];
+	for (const group of groups(tiers.full)) {
+		const mine = [];
+		for (const stage of group) if (found < wanted.length && stageText(stage) === wanted[found]) mine.push(found++);
+		if (mine.length > 0) ran.push(mine);
+	}
+	if (found !== wanted.length) return false;
+	let next = 0;
+	const expected = groups(tiers.default).map((group) => group.map(() => next++));
+	return JSON.stringify(ran) === JSON.stringify(expected);
 }
 
 /**
