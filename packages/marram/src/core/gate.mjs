@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
+import { jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
 // A run's folder: its tier, when it started, and its gate's process id, so two gates starting in the same millisecond
@@ -123,9 +124,11 @@ export function groups(stages) {
 	return found;
 }
 
-export async function gate(root, config, [tier = "default"]) {
+export async function gate(root, config, given) {
+	const { json, args, say } = jsonOption(given);
+	const [tier = "default"] = args;
 	if (!TIERS.includes(tier)) {
-		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full]`);
+		console.error(`Unknown gate "${tier}". Usage: marram gate [fast | full] [--json]`);
 		process.exit(1);
 	}
 	const { logs = ".verify", keep = 20, progress, tiers, sleepGapMs = 30_000 } = config.gate ?? {};
@@ -166,7 +169,7 @@ export async function gate(root, config, [tier = "default"]) {
 		child.stderr.pipe(log, { end: false });
 		// Progress lines (a check's ✓ or ✗, and what the project's `progress` matches); everything else stays in the log.
 		child.stdout.on("data", (chunk) => {
-			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) console.log(`  ${name}: ${line.trim()}`);
+			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) say(`  ${name}: ${line.trim()}`);
 		});
 		let last = Date.now();
 		let slept = 0;
@@ -187,7 +190,7 @@ export async function gate(root, config, [tier = "default"]) {
 		const seconds = Math.round((Date.now() - started) / 1000);
 		report.stages.push({ name, code, seconds });
 		await saveReport();
-		console.log(`${code === 0 ? "✓" : "✗"} ${name} (${seconds}s)${code === 0 ? "" : `: see ${join(dir, `${name}.log`)}`}`);
+		say(`${code === 0 ? "✓" : "✗"} ${name} (${seconds}s)${code === 0 ? "" : `: see ${join(dir, `${name}.log`)}`}`);
 		return { passed: code === 0, slept };
 	}
 
@@ -209,7 +212,7 @@ export async function gate(root, config, [tier = "default"]) {
 	async function settle(stage) {
 		let { passed, slept } = await runStage(stage);
 		while (!passed && slept > 0 && !interrupted) {
-			console.log(`  The machine slept for ${Math.round(slept / 1000)}s during ${stage.name}, so its failure says nothing about the code. Running it again.`);
+			say(`  The machine slept for ${Math.round(slept / 1000)}s during ${stage.name}, so its failure says nothing about the code. Running it again.`);
 			await rename(join(dir, `${stage.name}.log`), join(dir, `${stage.name}-slept.log`));
 			({ passed, slept } = await runStage(stage));
 		}
@@ -217,21 +220,25 @@ export async function gate(root, config, [tier = "default"]) {
 	}
 
 	const began = Date.now();
-	console.log(`Gate (${tier}). Logs: ${dir}`);
+	/** With --json, the run's report and how it ended, as the command's result. */
+	const result = (ended) => json && printJson({ ...report, logs: dir, ...ended });
+	say(`Gate (${tier}). Logs: ${dir}`);
 	for (const group of groups(tiers[tier])) {
 		// A group's stages all run to the end, so each has its log, and the gate fails at the first of them that failed.
 		const results = await Promise.all(group.map(settle));
 		if (interrupted) {
-			console.log(`\nGate interrupted at ${group.map((stage) => stage.name).join(", ")}.`);
+			say(`\nGate interrupted at ${group.map((stage) => stage.name).join(", ")}.`);
+			result({ interrupted: true });
 			process.exit(1);
 		}
 		const failed = group.find((_, i) => !results[i]);
 		if (failed !== undefined) {
 			const log = join(dir, `${failed.name}.log`);
 			verdict(false, { stage: failed.name, log });
-			console.log(`\nGate failed at ${failed.name}.`);
+			say(`\nGate failed at ${failed.name}.`);
 			const excerpt = failureExcerpt(log);
-			if (excerpt) console.log(excerpt);
+			if (excerpt) say(excerpt);
+			result({ failedAt: failed.name, log, excerpt });
 			process.exit(1);
 		}
 	}
@@ -240,5 +247,6 @@ export async function gate(root, config, [tier = "default"]) {
 	await saveReport();
 	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
 	if (tree !== undefined && treeOf(root) === tree) verdict(true);
-	console.log(`\nGate passed (${Math.round((Date.now() - began) / 1000)}s).`);
+	say(`\nGate passed (${Math.round((Date.now() - began) / 1000)}s).`);
+	result({ seconds: Math.round((Date.now() - began) / 1000) });
 }

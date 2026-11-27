@@ -285,3 +285,26 @@ test("a failure in a concurrent group fails the gate at the first stage of it th
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("with --json, the gate's report is JSON on stdout, passed or failed, and its lines go to stderr", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-gate-"));
+	const run = (tiers) => {
+		writeFileSync(join(root, "marram.config.mjs"), `export default { gate: { logs: "logs", tiers: ${JSON.stringify(tiers)} } };`);
+		return spawnSync(process.execPath, [BIN, "gate", "fast", "--json"], { cwd: root, encoding: "utf8" });
+	};
+	try {
+		const passed = run({ fast: [{ name: "ok", run: ["node", "-e", ""] }] });
+		assert.equal(passed.status, 0, passed.stdout + passed.stderr);
+		const good = JSON.parse(passed.stdout);
+		assert.deepEqual([good.tier, good.passed, good.stages.map(({ name, code }) => `${name} ${code}`)], ["fast", true, ["ok 0"]]);
+		assert.match(passed.stderr, /✓ ok/);
+		const failed = run({ fast: [{ name: "broken", run: ["node", "-e", "console.log('not ok: nope'); process.exit(3)"] }] });
+		assert.equal(failed.status, 1);
+		const bad = JSON.parse(failed.stdout);
+		assert.deepEqual([bad.passed, bad.failedAt], [false, "broken"]);
+		assert.match(bad.excerpt, /not ok: nope/);
+		assert.ok(bad.log.endsWith("broken.log"));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

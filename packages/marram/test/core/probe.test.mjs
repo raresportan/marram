@@ -62,6 +62,20 @@ test("a fault its check fails on, for the reason given, is caught, and the copy 
 	}
 });
 
+test("with --json, the faults' verdicts are JSON on stdout, and the lines go to stderr", () => {
+	const repo = project(BY_COMMAND);
+	try {
+		const result = repo.probe("--json");
+		assert.equal(result.status, 0, result.stdout + result.stderr);
+		const { caught, total, faults } = JSON.parse(result.stdout);
+		assert.deepEqual([caught, total, faults.map(({ name, state }) => `${name}: ${state}`)], [1, 1, ["a stored zero: caught"]]);
+		assert.equal(typeof faults[0].ms, "number");
+		assert.match(result.stderr, /^1\/1 faults caught$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a check weakened in the working tree misses the fault, and says so", () => {
 	const repo = project(`${BY_COMMAND}, ${BY_TEST}`);
 	try {

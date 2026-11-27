@@ -12,10 +12,11 @@ import { checkoutAt, scratchFolder } from "./checkout.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { removedCitations } from "./map-diff.mjs";
 import { isTestFile, testsIn } from "./test-inventory.mjs";
+import { jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
 const CONFIG = "marram.config.mjs";
-const USAGE = "Usage: marram guard-diff <base> [--map <feature map>]… [--hooks <folder>]…";
+const USAGE = "Usage: marram guard-diff <base> [--map <feature map>]… [--hooks <folder>]… [--json]";
 const FLAGS = ["--map", "--hooks"];
 const BLIND = "Not compared: a skip or an assertion made as a test runs or in a helper it calls, test files without the usual names, the scripts a stage's script runs in turn, and checks a script chooses itself (its own list of tests or journeys).";
 
@@ -24,7 +25,8 @@ const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" 
 const paths = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).split("\0").filter(Boolean);
 
 /** `cwd`: where the command runs, which `--map` paths are relative to. */
-export async function guardDiff(cwd, args) {
+export async function guardDiff(cwd, options) {
+	const { json, args } = jsonOption(options);
 	const [base, ...rest] = args;
 	if (!base || base.startsWith("-") || rest.length % 2 !== 0 || rest.some((value, i) => (i % 2 === 0 ? !FLAGS.includes(value) : !value))) throw new Error(USAGE);
 	const given = (flag) => rest.filter((_, i) => i % 2 === 1 && rest[i - 1] === flag);
@@ -62,6 +64,7 @@ export async function guardDiff(cwd, args) {
 	} finally {
 		rmSync(scratch, { recursive: true, force: true });
 	}
+	if (json) return printJson({ base, mergeBase: ancestor, sections: sections.map(([title, lines]) => ({ title, lines })), notCompared: BLIND });
 	const since = `${ancestor.slice(0, 7)}, the merge base with ${base}`;
 	if (sections.length === 0) console.log(`No guard changes since ${since}.`);
 	else console.log(`Guard changes since ${since}:\n\n${sections.map(([title, lines]) => [title, ...lines.map((line) => "  " + line)].join("\n")).join("\n")}`);

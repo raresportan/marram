@@ -27,12 +27,14 @@ import { probesProblems } from "./config.mjs";
 import { runBounded } from "./bounded.mjs";
 import { spawnable } from "./command.mjs";
 import { outputExcerpt as excerpt } from "./failure-excerpt.mjs";
+import { jsonOption, printJson } from "./json-output.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
 
-export function probe(root, config, names) {
+export function probe(root, config, given) {
+	const { json, args: names, say } = jsonOption(given);
 	// Checked as loading the config checks it, for a caller that hands one over directly.
 	const [problem] = probesProblems(config.probes ?? {});
 	if (problem !== undefined) throw new Error(problem);
@@ -80,12 +82,13 @@ export function probe(root, config, names) {
 				snapshot.restore();
 			}
 			const line = { caught: `✓ ${fault.name}: caught (${Date.now() - started} ms)`, missed: `✗ ${fault.name}: missed: the check passed with the fault in place`, inconclusive: `? ${fault.name}: inconclusive: ${verdict.detail}` }[verdict.state];
-			console.log(line);
-			return { name: fault.name, ...verdict };
+			say(line);
+			return { name: fault.name, ...verdict, ms: Date.now() - started };
 		});
 		const caught = verdicts.filter((verdict) => verdict.state === "caught").length;
 		const missed = verdicts.filter((verdict) => verdict.state === "missed").map((verdict) => verdict.name);
-		console.log(`${caught}/${verdicts.length} faults caught${missed.length > 0 ? `. Missed: ${missed.join(", ")}` : ""}`);
+		say(`${caught}/${verdicts.length} faults caught${missed.length > 0 ? `. Missed: ${missed.join(", ")}` : ""}`);
+		if (json) printJson({ caught, total: verdicts.length, faults: verdicts });
 		if (caught !== verdicts.length) process.exitCode = 1;
 	} finally {
 		for (const [signal, stop] of signals) process.off(signal, stop);

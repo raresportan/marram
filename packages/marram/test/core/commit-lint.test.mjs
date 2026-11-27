@@ -82,6 +82,10 @@ test("review-summary groups findings since a tag and identifies missing rungs", 
 		assert.ok(report.includes(`https://github.com/org/project/commit/${hash}`));
 		assert.doesNotMatch(report, /ancient/);
 		assert.match(summary("--since", "HEAD"), /0 annotated finding/);
+		const json = JSON.parse(summary("--since", "start", "--json"));
+		assert.deepEqual([json.findings, json.withoutRung, json.classes.map(({ name, total }) => `${name} ${total}`)], [2, 1, ["race 2", "state 1"]]);
+		assert.deepEqual(json.classes[0].rungs.map(({ rung, findings }) => [rung, findings.map(({ title }) => title)]), [["unit", ["Lost response"]], ["none", ["Missing device"]]]);
+		assert.equal(json.classes[0].rungs[1].findings[0].commit, `https://github.com/org/project/commit/${hash}`);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

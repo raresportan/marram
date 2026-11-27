@@ -435,6 +435,15 @@ Marram probes three of its own guards this way, in the full gate: a shared cache
 missing IPC handler, and a restart check left in an uncalled helper. The patches are in `probes/`. They need the same
 Electron environment as Tally's journeys. Each command gets five minutes; set `PROBE_TIMEOUT_MS` to change that.
 
+### JSON for CI
+
+`marram gate`, `marram probe`, `marram guard-diff` and `marram review-summary` take `--json`: the result goes to stdout
+as one JSON document, and what the command says as it runs goes to stderr. The gate gives its run's report (each stage's
+exit code and seconds, its logs folder) with `passed`, and on failure `failedAt`, `log` and the `excerpt` it showed.
+Probe gives each fault's `state` (`caught`, `missed` or `inconclusive`), `detail` and `ms`. guard-diff gives the merge
+base and its `sections`, each a `title` and its `lines`. review-summary gives each class's findings by rung, with their
+commits. `marram replay` always prints JSON. Exit codes are the same with or without `--json`.
+
 ## Credit
 
 The approach, and terms such as the trust ladder and the feature map, come from Lauren Tan's talk ["here's how i shipped
