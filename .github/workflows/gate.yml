@@ -1,5 +1,6 @@
-# The full gate on every pull request and on main, on Linux and on Windows, so a green result doesn't depend on the
-# author's machine or on hooks that `--no-verify` skips. For a pull request, also what it changed in the checks that judge it
+# The full gate on every pull request and on main, on Linux, Windows and macOS, so a green result doesn't depend on the
+# author's machine or on hooks that `--no-verify` skips. macOS is where a write to a pipe can finish after the command
+# exits, so the tests that read a report through a slow pipe fail only there. For a pull request, also what it changed in the checks that judge it
 # (guard-diff), which guard-report.yml posts on the pull request.
 name: Gate
 
@@ -22,7 +23,7 @@ jobs:
       # One platform failing doesn't hide how the other did.
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]
+        os: [ubuntu-24.04, windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -54,6 +55,23 @@ jobs:
             examples/tally/.verify/
           include-hidden-files: true
           if-no-files-found: ignore
+
+  # The workflows themselves, which no gate stage can run: actionlint for what GitHub would reject or misread (an
+  # expression, a condition, a job's needs), zizmor for what lets a pull request's code reach a token or a write.
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: zizmor
+        run: pipx run zizmor==1.5.2 --format plain .github/workflows
 
   # This job runs the pull request's code, so it gets a read-only token, and checkout keeps no credentials for that code
   # to read. It reports to the run's summary and leaves its output as an artifact; guard-report.yml, which runs from the
