@@ -21,6 +21,8 @@ export interface Result {
 	readonly journey: string;
 	readonly checks: readonly Check[];
 	readonly error?: string;
+	/** Why its session couldn't be closed, which fails the journey too. */
+	readonly cleanup?: string;
 	readonly pageErrors: readonly string[];
 }
 /** Whether a journey's result fails it. */

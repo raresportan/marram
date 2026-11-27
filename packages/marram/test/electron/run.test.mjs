@@ -78,3 +78,29 @@ test("a journey that throws doesn't stop the run when its session's shot isn't a
 		rmSync(evidence, { recursive: true, force: true });
 	}
 });
+
+test("a session that can't be closed, or opened, fails its journey, and the run goes on and writes its report", async () => {
+	const evidence = mkdtempSync(join(tmpdir(), "marram-dispose-"));
+	try {
+		const ran = [];
+		const passed = await runJourneys({
+			chosen: ["won't close", "won't open", "after"], evidence,
+			open: (journey) => {
+				if (journey === "won't open") throw new Error("no window");
+				return { ...session(), dispose: async () => { if (journey === "won't close") throw new Error("still running"); } };
+			},
+			run: async (journey) => { ran.push(journey); },
+		});
+		assert.equal(passed, false);
+		assert.deepEqual(ran, ["won't close", "after"]);
+		const report = JSON.parse(readFileSync(join(evidence, "report.json"), "utf8"));
+		assert.deepEqual(report.map(({ journey, error, cleanup }) => ({ journey, error, cleanup })), [
+			{ journey: "won't close", error: undefined, cleanup: "still running" },
+			{ journey: "won't open", error: "couldn't open its session: no window", cleanup: undefined },
+			{ journey: "after", error: undefined, cleanup: undefined },
+		]);
+		assert.deepEqual(report.map(failed), [true, true, false]);
+	} finally {
+		rmSync(evidence, { recursive: true, force: true });
+	}
+});
