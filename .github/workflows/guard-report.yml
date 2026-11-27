@@ -1,0 +1,70 @@
+# Posts the Gate run's guard-diff on its pull request: one comment, edited on each run. It runs from the default
+# branch's definition (workflow_run), never the pull request's, so the write token here is out of that code's reach:
+# this job checks out only the default branch's report script, and treats the artifact the run left as text.
+name: Guard report
+
+on:
+  workflow_run:
+    workflows: [Gate]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  comment:
+    name: Comment on the pull request
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        # A run cancelled before guard-diff left nothing to post.
+        continue-on-error: true
+        id: download
+        with:
+          name: guard-report
+          path: guard-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Post it
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          # The number came from the run's own code, so GitHub's record of the run decides. For a pull request from this
+          # repository, GitHub lists it with the run: the number must be one listed. For one from a fork the list is
+          # empty, so the pull request's head must be the run's: the same repository, branch and commit (a head commit
+          # alone could be shared by two pull requests).
+          if [[ ! -f guard-report/pr || ! -f guard-report/guard-diff.txt ]]; then
+            echo "The run left no report to post: nothing posted."
+            exit 0
+          fi
+          pr=$(head -c 16 guard-report/pr | tr -cd '0-9')
+          if [[ -z $pr ]]; then
+            echo "The run named no pull request: nothing posted."
+            exit 0
+          fi
+          listed=$(jq -r '.workflow_run.pull_requests[].number' "$GITHUB_EVENT_PATH")
+          if [[ -n $listed ]] && ! grep -qx "$pr" <<< "$listed"; then
+            echo "The run named #$pr, but GitHub ran it for $(tr '\n' ' ' <<< "$listed"): nothing posted."
+            exit 0
+          fi
+          head=$(gh api "repos/$REPO/pulls/$pr" --jq '[.head.repo.full_name, .head.ref, .head.sha] | join(" ")')
+          if [[ $head != "$HEAD_REPO $HEAD_BRANCH $HEAD_SHA" ]]; then
+            echo "Pull request #$pr's head is $head, not $HEAD_REPO $HEAD_BRANCH $HEAD_SHA, the run's: nothing posted."
+            exit 0
+          fi
+          PR=$pr .github/scripts/guard-diff-report.sh comment guard-report/guard-diff.txt

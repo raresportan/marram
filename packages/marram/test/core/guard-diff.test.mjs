@@ -215,6 +215,55 @@ test("a project whose path git would quote is compared, and an untracked hook is
 	}
 });
 
+test("hooks are compared where a fresh checkout has none configured (--hooks), and where core.hooksPath is absolute", () => {
+	const repo = repository();
+	const git = (...args) => execFileSync("git", args, { cwd: repo.root, encoding: "utf8" }).trim();
+	try {
+		// As in CI: a fresh checkout, so no core.hooksPath; the branch deletes the whole folder.
+		git("config", "--unset", "core.hooksPath");
+		rmSync(join(repo.root, ".githooks"), { recursive: true });
+		assert.doesNotMatch(repo.diff().stdout, /Hooks/, "nothing names the hooks");
+		assert.match(repo.diff("--hooks", ".githooks").stdout, /^Hooks \(\.githooks\)\n {2}deleted pre-push$/m);
+
+		repo.write(".githooks/pre-push", "exec true\n");
+		git("config", "core.hooksPath", join(repo.root, ".githooks"));
+		const absolute = repo.diff("--hooks", ".githooks");
+		assert.match(absolute.stdout, /^Hooks \(\.githooks\)\n {2}changed pre-push$/m);
+		assert.equal(absolute.stdout.match(/^Hooks/gm).length, 1, "the same folder, named twice, is compared once");
+
+		// .git/hooks is git's own, not in the work tree, so not compared; nor read as the work tree's top.
+		for (const own of [join(repo.root, ".git", "hooks"), join(repo.root, ".git", "hooks", "gone")]) {
+			git("config", "core.hooksPath", own);
+			const result = repo.diff();
+			assert.doesNotMatch(result.stdout, /^Hooks \(\.\)|^Hooks \(gone\)/m, result.stdout);
+			assert.match(result.stdout, /^Hooks \(.*\.git.*\)\n {2}outside the repository, so not compared/m);
+		}
+
+		// Another worktree of the same repository has its own files, which aren't this branch's.
+		const sibling = join(mkdtempSync(join(tmpdir(), "marram-worktree-")), "other");
+		try {
+			git("worktree", "add", "-q", sibling, "main");
+			git("config", "core.hooksPath", join(sibling, ".githooks"));
+			const result = repo.diff();
+			assert.doesNotMatch(result.stdout, /^Hooks \(\.githooks\)/m, result.stdout);
+			assert.match(result.stdout, /^Hooks \(.*other.*\)\n {2}outside the repository, so not compared/m);
+		} finally {
+			git("worktree", "remove", "--force", sibling);
+			rmSync(join(sibling, ".."), { recursive: true, force: true });
+		}
+
+		const elsewhere = mkdtempSync(join(tmpdir(), "marram-hooks-"));
+		try {
+			git("config", "core.hooksPath", elsewhere);
+			assert.match(repo.diff().stdout, /^Hooks \(.*marram-hooks-.*\)\n {2}outside the repository, so not compared/m);
+		} finally {
+			rmSync(elsewhere, { recursive: true, force: true });
+		}
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a stage's workspace is found in each revision, so swapped package names show the script that now runs", () => {
 	const repo = repository();
 	try {

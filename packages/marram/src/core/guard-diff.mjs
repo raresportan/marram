@@ -1,12 +1,12 @@
 // What a branch changed in the checks that judge it, so a reviewer sees what a green gate means after the change.
-// Usage: marram guard-diff <base> [--map <feature map>]…
+// Usage: marram guard-diff <base> [--map <feature map>]… [--hooks <folder>]…
 // Compares the merge base with the working tree: each project's gate tiers (every marram.config.mjs in the repository),
 // its push requirement, the package scripts its stages run, its probes and how their copy is prepared, the files in
-// core.hooksPath, the tests in changed test files (test-inventory.mjs), and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
+// core.hooksPath and each --hooks folder (for a checkout with no hooks configured, as in CI), the tests in changed test files (test-inventory.mjs), and the citations of each feature map named. It reports and leaves the judgment to the reviewer, so it always exits 0. It starts from the
 // repository rather than a project's configuration, so a configuration deleted or broken is reported, not fatal.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join, posix } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkoutAt, scratchFolder } from "./checkout.mjs";
 import { treeOf } from "./gate-state.mjs";
@@ -15,7 +15,8 @@ import { isTestFile, testsIn } from "./test-inventory.mjs";
 
 const TIERS = ["fast", "default", "full"];
 const CONFIG = "marram.config.mjs";
-const USAGE = "Usage: marram guard-diff <base> [--map <feature map>]…";
+const USAGE = "Usage: marram guard-diff <base> [--map <feature map>]… [--hooks <folder>]…";
+const FLAGS = ["--map", "--hooks"];
 const BLIND = "Not compared: a skip or an assertion made as a test runs or in a helper it calls, test files without the usual names, the scripts a stage's script runs in turn, and checks a script chooses itself (its own list of tests or journeys).";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
@@ -25,9 +26,11 @@ const paths = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8
 /** `cwd`: where the command runs, which `--map` paths are relative to. */
 export async function guardDiff(cwd, args) {
 	const [base, ...rest] = args;
-	if (!base || base.startsWith("-") || rest.length % 2 !== 0 || rest.some((value, i) => (i % 2 === 0 ? value !== "--map" : !value))) throw new Error(USAGE);
-	const maps = rest.filter((_, i) => i % 2 === 1);
+	if (!base || base.startsWith("-") || rest.length % 2 !== 0 || rest.some((value, i) => (i % 2 === 0 ? !FLAGS.includes(value) : !value))) throw new Error(USAGE);
+	const given = (flag) => rest.filter((_, i) => i % 2 === 1 && rest[i - 1] === flag);
+	const maps = given("--map");
 	const repo = git(cwd, "rev-parse", "--show-toplevel");
+	const hookFolders = hooksIn(repo, cwd, given("--hooks"));
 	const ancestor = git(repo, "merge-base", git(repo, "rev-parse", "--verify", "--end-of-options", base + "^{commit}"), "HEAD");
 	const scratch = scratchFolder("marram-guard-diff-");
 	const sections = [];
@@ -41,8 +44,7 @@ export async function guardDiff(cwd, args) {
 			const lines = compareProject(before, repo, project);
 			if (lines.length > 0) sections.push([project === "." ? "(root)" : project, lines]);
 		}
-		const hooksPath = git(repo, "config", "--default", "", "core.hooksPath");
-		if (hooksPath !== "" && !posix.isAbsolute(hooksPath)) {
+		for (const hooksPath of hookFolders.inside) {
 			const words = { A: "added", D: "deleted", M: "changed", T: "changed" };
 			const changed = paths(repo, "diff", "-z", "--name-status", "--no-renames", ancestor, "--", hooksPath);
 			const lines = [];
@@ -50,6 +52,7 @@ export async function guardDiff(cwd, args) {
 			for (const file of paths(repo, "ls-files", "-z", "--others", "--exclude-standard", "--", hooksPath)) lines.push(`added ${posix.relative(hooksPath, file)}`);
 			if (lines.length > 0) sections.push([`Hooks (${hooksPath})`, lines.sort((a, b) => a.split(" ")[1].localeCompare(b.split(" ")[1]))]);
 		}
+		for (const outside of hookFolders.outside) sections.push([`Hooks (${outside})`, ["outside the repository, so not compared: what they run isn't the branch's to change, but check what they are"]]);
 		const tests = testChanges(repo, ancestor, before);
 		if (tests.length > 0) sections.push(["Tests", tests]);
 		for (const map of maps) {
@@ -64,6 +67,47 @@ export async function guardDiff(cwd, args) {
 	else console.log(`Guard changes since ${since}:\n\n${sections.map(([title, lines]) => [title, ...lines.map((line) => "  " + line)].join("\n")).join("\n")}`);
 	console.log(`\n${BLIND}`);
 }
+
+/**
+ * The hook folders to compare, as paths from the repository's top (`inside`), and those outside it, which can't be:
+ * core.hooksPath, relative or absolute, and each `--hooks` folder (from `cwd`).
+ */
+function hooksIn(repo, cwd, flags) {
+	const configured = git(repo, "config", "--default", "", "core.hooksPath");
+	const folders = [...(configured === "" ? [] : [resolve(repo, configured)]), ...flags.map((folder) => resolve(cwd, folder))];
+	const inside = new Set();
+	const outside = new Set();
+	for (const folder of folders) {
+		const path = fromTop(repo, folder);
+		if (path === undefined) outside.add(folder);
+		else inside.add(path);
+	}
+	return { inside: [...inside].sort(), outside: [...outside].sort() };
+}
+
+/**
+ * `folder`'s path from the top of the work tree of `repo`, or undefined when it isn't in it (another repository,
+ * another worktree of this one, or .git itself). Git names it, from the nearest folder that exists, so a path spelled through a link or a Windows short
+ * name (RUNNER~1) is still found inside, and so is a folder the branch deleted.
+ */
+function fromTop(repo, folder) {
+	const missing = [];
+	let existing = folder;
+	while (!existsSync(existing)) {
+		missing.unshift(basename(existing));
+		if (dirname(existing) === existing) return undefined;
+		existing = dirname(existing);
+	}
+	// Inside .git, rev-parse succeeds with an empty prefix, as at the top: only a folder in the work tree has a path from it.
+	const inWorkTree = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: existing, encoding: "utf8" });
+	if (inWorkTree.status !== 0 || inWorkTree.stdout.trim() !== "true" || gitDir(existing) !== gitDir(repo)) return undefined;
+	const prefix = spawnSync("git", ["rev-parse", "--show-prefix"], { cwd: existing, encoding: "utf8" });
+	if (prefix.status !== 0) return undefined;
+	return posix.join(prefix.stdout.trim(), ...missing).replace(/\/$/, "") || ".";
+}
+
+/** The work tree's own git folder: .git, or .git/worktrees/<name> for another worktree of the same repository. */
+const gitDir = (cwd) => git(cwd, "rev-parse", "--absolute-git-dir");
 
 /**
  * Test files changed since the merge base (checked out in `before`), read on both sides: tests removed, newly skipped,
