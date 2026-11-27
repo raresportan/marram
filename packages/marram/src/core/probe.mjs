@@ -30,6 +30,7 @@ import { outputExcerpt as excerpt } from "./failure-excerpt.mjs";
 import { jsonOption, printJson } from "./json-output.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
+import { matches } from "./pattern.mjs";
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
 
@@ -153,7 +154,7 @@ function judge(root, copy, project, fault, timeoutMs, observations, reset) {
 		if (result.error?.code === "ETIMEDOUT") return { state: "other", detail: `the check didn't finish within ${timeoutMs} ms` };
 		if (result.error || result.status === null) return { state: "other", detail: result.error?.message ?? "the check didn't finish" };
 		if (result.status === 0) return { state: "passed" };
-		const expected = fault.expect instanceof RegExp ? fault.expect.test(result.output) : result.output.includes(fault.expect);
+		const expected = fault.expect instanceof RegExp ? matches(fault.expect, result.output) : result.output.includes(fault.expect);
 		return { state: expected ? "expected" : "other", detail: excerpt(result.output) };
 	};
 	const clean = check();

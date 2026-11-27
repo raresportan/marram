@@ -231,6 +231,22 @@ test("without gate.logs, the gate's logs go in .verify", () => {
 	}
 });
 
+test("a progress pattern with the g or y flag shows every line it matches", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-progress-"));
+	try {
+		const stage = { name: "steps", run: ["node", "-e", "console.log('step one\\nstep two\\nstep three\\nnothing else')"] };
+		for (const flags of ["g", "y"]) {
+			writeFileSync(join(root, "marram.config.mjs"), `export default { gate: { progress: /step/${flags}, tiers: { fast: [${JSON.stringify(stage)}] } } };`);
+			const result = spawnSync("node", [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
+			assert.equal(result.status, 0, result.stderr);
+			const shown = (result.stdout + result.stderr).split("\n").filter((line) => line.includes("steps: ")).map((line) => line.split("steps: ")[1]);
+			assert.deepEqual(shown, ["step one", "step two", "step three"], `with /step/${flags}`);
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("consecutive stages marked concurrent form one group; the rest run alone, in order", () => {
 	const stage = (name, concurrent) => ({ name, run: ["true"], ...(concurrent === undefined ? {} : { concurrent }) });
 	const names = (stages) => groups(stages).map((group) => group.map(({ name }) => name).join("+"));

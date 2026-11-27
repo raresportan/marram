@@ -7,6 +7,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { featureOf, mapLines, statusOf } from "./map-citations.mjs";
+import { firstMatch, matches } from "./pattern.mjs";
 
 /** Check names per function in the journey sources (`<session>.check("…")`); `${…}` in a name matches anything. */
 function checksByFunction(folder, session) {
@@ -30,15 +31,14 @@ function checksByFunction(folder, session) {
 /** What's wrong with a `✅` line's citation, or undefined when it names something that exists. */
 function brokenCitation(cited, journeys, checksOf, citations) {
 	for (const { pattern, broken } of citations) {
-		pattern.lastIndex = 0;
-		const match = pattern.exec(cited);
+		const match = firstMatch(pattern, cited);
 		if (match !== null)
 			return broken(match);
 	}
 	const [, journey, check] = /^([\w-]+)(?: › "(.+)")?$/.exec(cited) ?? [];
 	if (journey === undefined || journeys[journey] === undefined)
 		return `no journey in "${cited}"`;
-	if (check !== undefined && !checksOf(journey).some((pattern) => pattern.test(check)))
+	if (check !== undefined && !checksOf(journey).some((pattern) => matches(pattern, check)))
 		return `${journey} has no check "${check}"`;
 	return undefined;
 }
@@ -49,9 +49,6 @@ function brokenCitation(cited, journeys, checksOf, citations) {
  */
 export function readFeatureMap({ map, folder, journeys, citations = [], session = "session" }) {
 	const byFunction = checksByFunction(folder, session);
-	// Copies, with their flags (sticky still means "from the start"), each matched from a citation's start: with g or y,
-	// exec starts where the last match ended, so a citation after one that matched would be missed.
-	citations = citations.map(({ pattern, broken }) => ({ pattern: new RegExp(pattern.source, pattern.flags), broken }));
 	const isJourney = (name) => Object.values(journeys).some((journey) => journey.run.name === name);
 	const helpers = [...byFunction].filter(([name]) => !isJourney(name)).flatMap(([, names]) => names);
 	const checksOf = (journey) => [...(byFunction.get(journeys[journey].run.name) ?? []), ...helpers];

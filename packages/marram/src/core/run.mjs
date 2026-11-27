@@ -5,6 +5,7 @@
 import { mkdirSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { mapCitations } from "./map-citations.mjs";
+import { matches } from "./pattern.mjs";
 
 /** A source file changed since the build that holds it (by path from `root`), if any. A missing output counts as old. */
 export function staleInput(root, builds) {
@@ -67,13 +68,7 @@ export async function runJourneys({ chosen, run, open, evidence, featureMap }) {
 	}
 	const missing = [];
 	if (featureMap) {
-		// Copies, with their flags (sticky still means "from the start"), each tested from a citation's start: with g or y,
-		// test() starts where the last match ended, and a citation after one it matched would be missed.
-		const custom = (featureMap.custom ?? []).map((pattern) => new RegExp(pattern.source, pattern.flags));
-		const matches = (pattern, citation) => {
-			pattern.lastIndex = 0;
-			return pattern.test(citation);
-		};
+		const custom = featureMap.custom ?? [];
 		for (const { feature, citation } of mapCitations(readFileSync(featureMap.path, "utf8"))) {
 			if (custom.some((pattern) => matches(pattern, citation)))
 				continue;

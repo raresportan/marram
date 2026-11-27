@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { COVERS_DEFAULT, projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
+import { matches } from "./pattern.mjs";
 import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
@@ -180,7 +181,7 @@ export async function gate(root, config, given) {
 		child.stderr.pipe(log, { end: false });
 		// Progress lines (a check's ✓ or ✗, and what the project's `progress` matches); everything else stays in the log.
 		child.stdout.on("data", (chunk) => {
-			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || progress?.test(line)) say(`  ${name}: ${line.trim()}`);
+			for (const line of chunk.toString().split("\n")) if (/^\s*[✓✗]/.test(line) || (progress !== undefined && matches(progress, line))) say(`  ${name}: ${line.trim()}`);
 		});
 		let last = Date.now();
 		let slept = 0;

@@ -13,6 +13,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { matches } from "./pattern.mjs";
 
 const REVIEW_FIX = /\b(?:(?:code )?review|PR|pull request)(?:'s)? (?:findings?|gaps?|comments|feedback|notes|nits|suggestions)\b|\b(?:address(?:es|ed|ing)?|appl(?:y|ies|ied|ying)|resolv(?:e[sd]?|ing)|handl(?:e[sd]?|ing)) (?:the |all )?(?:review|feedback|nits)\b/i;
 const RUNGS = ["type", "lint", "architecture", "check", "journey", "unit"];
@@ -27,17 +28,14 @@ export function subjectsOf(config) {
 	const subjects = config.review?.subjects;
 	if (subjects === undefined) return REVIEW_FIX;
 	if (!(subjects instanceof RegExp)) throw new Error("review.subjects in marram.config.mjs is a RegExp, the subjects of review-fix commits");
-	// A copy, with its flags: sticky still means "from the start". Tested once per subject, from its start each time
-	// (reviewFindings resets it), so a global or sticky one doesn't carry its position from one subject to the next.
-	return new RegExp(subjects.source, subjects.flags);
+	return subjects;
 }
 
 /** The finding blocks of a review-fix commit, using its whole body when there are no bullets. */
 export function reviewFindings(message, subjects = REVIEW_FIX) {
 	const lines = message.split("\n").filter((line) => !line.startsWith("#"));
 	const subject = lines[0] ?? "";
-	subjects.lastIndex = 0;
-	if (!subjects.test(subject) || subject.startsWith("Merge ")) return [];
+	if (!matches(subjects, subject) || subject.startsWith("Merge ")) return [];
 	const body = lines.slice(1);
 	const findings = [];
 	for (const line of body) {
