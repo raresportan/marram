@@ -84,9 +84,12 @@ test("the published package has no TypeScript sources: its TypeScript modules ru
 		writeFileSync(join(root, "use.mjs"), plain.map((name, i) => `import * as m${i} from "@raresportan/marram${name.slice(1)}"; if (!Object.keys(m${i}).length) throw Error("${name}");`).join("\n"));
 		const imported = spawnSync(process.execPath, ["use.mjs"], { cwd: root, encoding: "utf8" });
 		assert.equal(imported.status, 0, imported.stderr);
-		writeFileSync(join(root, "use.ts"), 'import { until } from "@raresportan/marram/core/until";\nimport { background } from "@raresportan/marram/node/background";\nimport { Scope } from "@raresportan/marram/node/scope";\nimport { defineIpc } from "@raresportan/marram/electron/ipc";\nexport const all: unknown[] = [until, background, Scope, defineIpc];\n');
+		// Every entry, compiled or .mjs, has types: under strict, one without them fails (TS7016). The peers its types
+		// name (TypeScript, React, Playwright) aren't installed here, so declaration files themselves aren't checked.
+		const names = Object.keys(exports);
+		writeFileSync(join(root, "use.ts"), `${names.map((name, i) => `import * as m${i} from "@raresportan/marram${name.slice(1)}";`).join("\n")}\nexport const all: unknown[] = [${names.map((_, i) => `m${i}`).join(", ")}];\n`);
 		const types = resolve(pkg, "../../node_modules/@types");
-		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "NodeNext", strict: true, noEmit: true, typeRoots: [types], types: ["node"] }, files: ["use.ts"] }));
+		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "NodeNext", strict: true, noEmit: true, skipLibCheck: true, typeRoots: [types], types: ["node"] }, files: ["use.ts"] }));
 		const tsc = spawnSync(process.execPath, [resolve(pkg, "../../node_modules/typescript/bin/tsc"), "-p", root], { cwd: root, encoding: "utf8" });
 		assert.equal(tsc.status, 0, tsc.stdout + tsc.stderr);
 	} finally {
