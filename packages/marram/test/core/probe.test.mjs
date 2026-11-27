@@ -76,6 +76,19 @@ test("with --json, the faults' verdicts are JSON on stdout, and the lines go to 
 	}
 });
 
+test("the patched run starts from the copy as setup left it, not from what the clean run wrote", () => {
+	// Fails when its own earlier output is there, and never reads value.cjs, which the patch changes.
+	const leftover = '{ name: "a leftover", patch: "probes/zero.patch", run: ["node", "-e", "const fs = require(\\"fs\\"); if (fs.existsSync(\\"out.txt\\")) { console.log(\\"stored value\\"); process.exit(1); } fs.writeFileSync(\\"out.txt\\", \\"\\")"], expect: /stored value/ }';
+	const repo = project(leftover);
+	try {
+		const result = repo.probe();
+		assert.equal(result.status, 1, result.stdout + result.stderr);
+		assert.match(result.stdout, /^✗ a leftover: missed: the check passed with the fault in place$/m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a check weakened in the working tree misses the fault, and says so", () => {
 	const repo = project(`${BY_COMMAND}, ${BY_TEST}`);
 	try {

@@ -76,7 +76,7 @@ export function probe(root, config, given) {
 			const started = Date.now();
 			let verdict;
 			try {
-				verdict = judge(root, copy, project, fault, timeoutMs, join(scratch, "observations.jsonl"));
+				verdict = judge(root, copy, project, fault, timeoutMs, join(scratch, "observations.jsonl"), () => snapshot.restore());
 			} finally {
 				// The next fault runs in the copy as setup left it, whatever this one's checks wrote or rewrote.
 				snapshot.restore();
@@ -141,7 +141,7 @@ function choose(faults, names) {
  * `{ state, detail }`: caught, missed or inconclusive. The files the patch touched are put back, times included, before
  * this returns; the caller restores the rest of the copy.
  */
-function judge(root, copy, project, fault, timeoutMs, observations) {
+function judge(root, copy, project, fault, timeoutMs, observations, reset) {
 	const cwd = join(project, fault.cwd ?? ".");
 	const check = () => {
 		if (fault.test) {
@@ -158,6 +158,9 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 	};
 	const clean = check();
 	if (clean.state !== "passed") return { state: "inconclusive", detail: `the check fails without the fault: ${clean.detail}` };
+	// The patched run starts where the clean one did: what the clean run wrote (an output file, a cache) would otherwise
+	// be there, and a check that fails on it would have its failure put down to the patch.
+	reset();
 	const patch = resolve(root, fault.patch);
 	// Each file's times too, put back with the file: a build tool that compares them would otherwise take the next
 	// fault's copy for one whose sources changed since it was built.
