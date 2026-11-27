@@ -59,6 +59,20 @@ test("a full run requires the cited restart check even when the other checks pas
 	}
 });
 
+test("a project's citation pattern with the g or y flag covers every citation it matches at runtime too", async () => {
+	const evidence = mkdtempSync(join(tmpdir(), "marram-observations-"));
+	try {
+		const path = join(evidence, "map.md");
+		writeFileSync(path, "- **Server**\n  - ✅ server › a.ts\n  - ✅ server › b.ts\n  - ✅ server › c.ts");
+		for (const pattern of [/^server › /g, /server › /y]) {
+			const options = { chosen: [], evidence, featureMap: { path, custom: [pattern] }, open: () => ({ ...session(), dispose: async () => {} }), run: async () => {} };
+			assert.equal(await runJourneys(options), true, `${pattern}: ${readFileSync(join(evidence, "missing-citations.json"), "utf8")}`);
+		}
+	} finally {
+		rmSync(evidence, { recursive: true, force: true });
+	}
+});
+
 test("a journey that throws doesn't stop the run when its session's shot isn't async", async () => {
 	const evidence = mkdtempSync(join(tmpdir(), "marram-shot-"));
 	try {
