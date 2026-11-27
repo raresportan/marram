@@ -122,6 +122,47 @@ test("the gate keeps gate.keep runs' logs, its own among them", () => {
 	}
 });
 
+test("a run still going keeps its folder while another gate prunes, and one whose gate is gone doesn't", async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-overlap-"));
+	try {
+		// With WAIT set, the stage waits for a file `go`, so its gate is still running when the next one prunes.
+		// It gives up after 20s, so a test that fails before writing `go` doesn't leave it running.
+		writeFileSync(join(root, "wait.mjs"), 'import { existsSync } from "node:fs";\nconst until = Date.now() + 20_000;\nwhile (process.env.WAIT && !existsSync("go")) {\n\tif (Date.now() > until) process.exit(1);\n\tawait new Promise((done) => setTimeout(done, 50));\n}\nconsole.log("done");\n');
+		writeFileSync(join(root, "marram.config.mjs"), 'export default { gate: { logs: "logs", keep: 1, tiers: { fast: [{ name: "wait", run: ["node", "wait.mjs"] }] } } };');
+		const first = spawn(process.execPath, [BIN, "gate", "fast"], { cwd: root, env: { ...process.env, WAIT: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+		let output = "";
+		first.stdout.on("data", (chunk) => { output += chunk; });
+		first.stderr.on("data", (chunk) => { output += chunk; });
+		const exited = new Promise((done) => first.on("exit", done));
+		const logs = join(root, "logs");
+		let firstRun;
+		try {
+			while (!(existsSync(logs) && readdirSync(logs).some((name) => existsSync(join(logs, name, "wait.log"))))) await new Promise((done) => setTimeout(done, 50));
+			[firstRun] = readdirSync(logs);
+
+			const second = spawnSync(process.execPath, [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
+			assert.equal(second.status, 0, second.stdout + second.stderr);
+			assert.ok(existsSync(join(logs, firstRun)), "the running gate's folder is kept, though keep is 1");
+			writeFileSync(join(root, "go"), "");
+			assert.equal(await exited, 0, output);
+			assert.equal(JSON.parse(readFileSync(join(logs, firstRun, "report.json"), "utf8")).passed, true);
+			assert.ok(!existsSync(join(logs, firstRun, "running")), "a finished run is no longer marked");
+		} finally {
+			writeFileSync(join(root, "go"), "");
+			first.kill();
+			await exited;
+		}
+
+		// A gate that died left its marker: its process is gone, so the folder goes.
+		const dead = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+		writeFileSync(join(logs, firstRun, "running"), dead);
+		await pruneLogs(logs, 1);
+		assert.ok(!existsSync(join(logs, firstRun)), "a run whose gate is gone is pruned");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("without gate.logs, the gate's logs go in .verify", () => {
 	const root = mkdtempSync(join(tmpdir(), "marram-logs-"));
 	try {

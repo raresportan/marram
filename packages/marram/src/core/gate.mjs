@@ -5,13 +5,13 @@
 //   full      The default gate and more (a build, the slow journeys). Before merging UI work, or nightly.
 // What each tier runs is the project's: `gate.tiers` in marram.config.mjs. Stages run in order and the first failure
 // stops the gate. Each stage's output is kept in its own log under `gate.logs`/gate-<tier>-<time>/, with report.json;
-// the newest `gate.keep` runs' folders are kept, 20 unless set.
+// the newest `gate.keep` runs' folders are kept, 20 unless set, and a run still going is never removed.
 // A stage that fails after the machine slept during it runs again: timeouts ran out and frames stopped while it slept,
 // so that failure says nothing about the code. A pause counts as sleep past `gate.sleepGapMs`, 30 seconds by default.
 // The default and full gates record their verdict for the working tree (gate-state.mjs), which the hooks reuse.
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
-import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { createWriteStream, rmSync } from "node:fs";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
@@ -20,16 +20,54 @@ import { failureExcerpt } from "./failure-excerpt.mjs";
 const TIERS = ["fast", "default", "full"];
 const RUN = /^gate-(?:fast|default|full)-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)$/;
 
+// A run's folder holds this while its gate runs: the gate's process id, so pruning leaves the folder of a run that's
+// still going (another gate, in another terminal or hook) and takes one whose gate is gone.
+const RUNNING = "running";
+
+/** Whether the process `pid` is still running. */
+function alive(pid) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return error.code === "EPERM";
+	}
+}
+
+/** Whether the run in `folder` is still going: its marker names a process that's running. */
+async function running(folder) {
+	const pid = Number(await readFile(join(folder, RUNNING), "utf8").catch(() => ""));
+	return Number.isSafeInteger(pid) && pid > 0 && alive(pid);
+}
+
 /**
- * Removes all but the newest `keep` of the gate's run folders in `logs`, whatever their tier. Only the gate's own folders
- * (gate-<tier>-<time>) are touched: anything else a project keeps there stays.
+ * Removes all but the newest `keep` of the gate's run folders in `logs`, whatever their tier, except a run still going.
+ * Only the gate's own folders (gate-<tier>-<time>) are touched: anything else a project keeps there stays.
  */
 export async function pruneLogs(logs, keep) {
 	const runs = (await readdir(logs, { withFileTypes: true }).catch(() => []))
 		.filter((entry) => entry.isDirectory() && RUN.test(entry.name))
 		.map((entry) => ({ name: entry.name, time: RUN.exec(entry.name)[1] }))
 		.sort((a, b) => b.time.localeCompare(a.time));
-	await Promise.all(runs.slice(keep).map(({ name }) => rm(join(logs, name), { recursive: true, force: true })));
+	await Promise.all(runs.slice(keep).map(async ({ name }) => {
+		const folder = join(logs, name);
+		if (!(await running(folder))) await rm(folder, { recursive: true, force: true });
+	}));
+}
+
+/**
+ * A new run's folder, `name` in `logs`, marked as this process's while it runs. It's made under a name pruning doesn't
+ * touch and renamed once marked, so another gate pruning at that moment can't take it unmarked.
+ */
+export async function startRun(logs, name) {
+	const starting = join(logs, `.${name}-${process.pid}`);
+	await mkdir(starting, { recursive: true });
+	await writeFile(join(starting, RUNNING), String(process.pid));
+	const dir = join(logs, name);
+	await rename(starting, dir);
+	// However the gate ends (a pass, a failure's exit, an interruption), the run is no longer going.
+	process.once("exit", () => rmSync(join(dir, RUNNING), { force: true }));
+	return dir;
 }
 
 /**
@@ -56,8 +94,7 @@ export async function gate(root, config, [tier = "default"]) {
 		console.error(`marram.config.mjs has no gate.tiers.${tier}: a list of stages.`);
 		process.exit(1);
 	}
-	const dir = join(root, logs, `gate-${tier}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
-	await mkdir(dir, { recursive: true });
+	const dir = await startRun(join(root, logs), `gate-${tier}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 	await pruneLogs(join(root, logs), keep);
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
 
