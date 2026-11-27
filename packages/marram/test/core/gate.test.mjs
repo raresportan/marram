@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { pruneLogs } from "../../src/core/gate.mjs";
+import { groups, pruneLogs } from "../../src/core/gate.mjs";
 
 const GATE = new URL("../../src/core/gate.mjs", import.meta.url).href;
 
@@ -226,6 +226,61 @@ test("without gate.logs, the gate's logs go in .verify", () => {
 		const result = spawnSync("node", [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
 		assert.equal(result.status, 0, result.stderr);
 		assert.equal(readdirSync(join(root, ".verify")).length, 1);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("consecutive stages marked concurrent form one group; the rest run alone, in order", () => {
+	const stage = (name, concurrent) => ({ name, run: ["true"], ...(concurrent === undefined ? {} : { concurrent }) });
+	const names = (stages) => groups(stages).map((group) => group.map(({ name }) => name).join("+"));
+	assert.deepEqual(names([stage("build"), stage("types", true), stage("rules", true), stage("unit", true), stage("journeys"), stage("a", true), stage("b", false), stage("c", true)]), ["build", "types+rules+unit", "journeys", "a", "b", "c"]);
+});
+
+// Each waits for the other's mark: run one after the other, the first would give up waiting and fail.
+const MEET = `
+import { existsSync, writeFileSync } from "node:fs";
+const [mine, theirs] = process.argv.slice(2);
+writeFileSync(mine, "");
+const until = Date.now() + 10_000;
+while (!existsSync(theirs) && Date.now() < until) await new Promise((done) => setTimeout(done, 50));
+if (!existsSync(theirs)) { console.error("not ok: " + theirs + " never ran alongside"); process.exit(1); }
+writeFileSync(mine + ".done", "");
+`;
+
+test("stages marked concurrent run at the same time, and the next stage waits for all of them", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-gate-"));
+	try {
+		writeFileSync(join(root, "meet.mjs"), MEET);
+		writeFileSync(join(root, "after.mjs"), 'import { existsSync } from "node:fs";\nprocess.exit(existsSync("a.done") && existsSync("b.done") ? 0 : 1);');
+		const tiers = { fast: [
+			{ name: "a", run: ["node", "meet.mjs", "a", "b"], concurrent: true },
+			{ name: "b", run: ["node", "meet.mjs", "b", "a"], concurrent: true },
+			{ name: "after", run: ["node", "after.mjs"] },
+		] };
+		writeFileSync(join(root, "marram.config.mjs"), `export default { gate: { logs: "logs", tiers: ${JSON.stringify(tiers)} } };`);
+		const result = spawnSync(process.execPath, [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stdout + result.stderr);
+		assert.match(result.stdout, /✓ after/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a failure in a concurrent group fails the gate at the first stage of it that failed, after the others finish", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-gate-"));
+	try {
+		const tiers = { fast: [
+			{ name: "slow", run: ["node", "-e", "setTimeout(() => {}, 500)"], concurrent: true },
+			{ name: "broken", run: ["node", "-e", "process.exit(1)"], concurrent: true },
+			{ name: "never", run: ["node", "-e", ""] },
+		] };
+		writeFileSync(join(root, "marram.config.mjs"), `export default { gate: { logs: "logs", tiers: ${JSON.stringify(tiers)} } };`);
+		const result = spawnSync(process.execPath, [BIN, "gate", "fast"], { cwd: root, encoding: "utf8" });
+		assert.equal(result.status, 1);
+		assert.match(result.stdout, /✓ slow/);
+		assert.match(result.stdout, /Gate failed at broken\./);
+		assert.doesNotMatch(result.stdout, /never/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

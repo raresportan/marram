@@ -102,6 +102,12 @@ is kept in its own log. On failure the terminal shows up to 60 lines starting at
 60 lines when the log has no marker. A stage that fails after the machine slept during it runs again, because that failure says
 nothing about the code.
 
+Stages that don't depend on each other can run at the same time: mark each with `concurrent: true`, as in
+`{ ...npm("rules", "run", "rules"), concurrent: true }`. Consecutive marked stages run together, and the next stage
+starts once they've all finished, so leave a stage that needs another's output (a typecheck after a build) unmarked,
+after it. In a group, every stage runs to the end and the gate fails at the first of them, in order, that failed.
+Running stages together doesn't change what a pass covers.
+
 Logs go in `gate.logs`, `.verify` unless set, one folder per run. The newest 20 runs are kept and older ones removed;
 `gate.keep` sets how many (`Infinity` keeps them all). Only the gate's own `gate-<tier>-<time>-<pid>` folders are removed,
 and never one whose gate is still running, such as a long gate in another terminal or hook.
