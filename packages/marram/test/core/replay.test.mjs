@@ -224,3 +224,24 @@ test("replay refuses a timeout that isn't a positive number of milliseconds", ()
 		repo.remove();
 	}
 });
+
+test("a base that fails the assertion and also something else (a teardown) is inconclusive, not proof of the fix", () => {
+	const repo = repository();
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), "export default {}");
+		writeFileSync(join(repo.root, "value.cjs"), 'require("node:test").after(() => { throw new Error("the store didn\'t close"); });\nmodule.exports = 0;');
+		const base = repo.commit();
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 1");
+		// Loaded as the file loads, so the base's hook is the file's own.
+		writeFileSync(join(repo.root, "probe.cjs"), 'const value = require("./value.cjs");\nrequire("node:test")("reads one", () => require("node:assert/strict").equal(value, 1, "stored value"));');
+		repo.commit();
+		const result = repo.replay(base, "probe.cjs");
+		assert.equal(result.status, 1, result.stdout + result.stderr);
+		const { base: before, candidate } = JSON.parse(result.stdout);
+		assert.equal(candidate.state, "passed");
+		assert.equal(before.state, "inconclusive");
+		assert.match(before.detail, /the store didn't close/);
+	} finally {
+		repo.remove();
+	}
+});
