@@ -396,8 +396,9 @@ gate again), or inconclusive (the clean run failed, the patch no longer applies,
 reason). The command exits 1 unless every fault is caught. `marram probe "<name>"` runs the faults named.
 
 Paths and commands are the project's; a fault's `cwd` changes where its command runs. Patches apply at the repository
-root, and each is taken back out with its files' times restored before the next fault (renamed files included), so a
-build tool doesn't see stale sources.
+root. Each fault then runs in the copy as setup left it, ignored build output included. Files a check made are removed,
+and files it changed are put back, even a patched file a check rewrote. The patched files get their times back too
+(renamed files included), so a build tool doesn't see stale sources. Linked paths are shared, so they aren't put back.
 
 A linked path must exist in the working tree and be ignored there. It's shared, not copied, and git refuses a patch
 that reaches through it. A linked folder with links in it, such as `node_modules` with its workspace packages, scopes
