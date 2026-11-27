@@ -308,3 +308,18 @@ test("with --json, the gate's report is JSON on stdout, passed or failed, and it
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("with --json, a report bigger than a pipe holds reaches a reader that's slow to drain it whole, though the gate fails", { skip: process.platform === "win32" && "reads through sh" }, () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-gate-"));
+	try {
+		// Its excerpt (60 lines of 2000 characters) makes the report about 120 KB; a pipe holds 64 KB.
+		const loud = "console.log('not ok: nope'); for (let i = 0; i < 70; i++) console.log('x'.repeat(2000)); process.exitCode = 3";
+		writeFileSync(join(root, "marram.config.mjs"), `export default { gate: { logs: "logs", tiers: { fast: [{ name: "loud", run: ["node", "-e", ${JSON.stringify(loud)}] }] } } };`);
+		const result = spawnSync("sh", ["-c", `"${process.execPath}" "${BIN}" gate fast --json | (sleep 1; cat)`], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+		const report = JSON.parse(result.stdout);
+		assert.equal(report.failedAt, "loud");
+		assert.equal(report.excerpt.split("\n").length, 60);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

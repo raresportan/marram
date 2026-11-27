@@ -220,15 +220,17 @@ export async function gate(root, config, given) {
 	}
 
 	const began = Date.now();
-	/** With --json, the run's report and how it ended, as the command's result. */
-	const result = (ended) => json && printJson({ ...report, logs: dir, ...ended });
+	/** With --json, the run's report and how it ended, as the command's result: written whole before the gate exits. */
+	const result = async (ended) => {
+		if (json) await printJson({ ...report, logs: dir, ...ended });
+	};
 	say(`Gate (${tier}). Logs: ${dir}`);
 	for (const group of groups(tiers[tier])) {
 		// A group's stages all run to the end, so each has its log, and the gate fails at the first of them that failed.
 		const results = await Promise.all(group.map(settle));
 		if (interrupted) {
 			say(`\nGate interrupted at ${group.map((stage) => stage.name).join(", ")}.`);
-			result({ interrupted: true });
+			await result({ interrupted: true });
 			process.exit(1);
 		}
 		const failed = group.find((_, i) => !results[i]);
@@ -238,7 +240,7 @@ export async function gate(root, config, given) {
 			say(`\nGate failed at ${failed.name}.`);
 			const excerpt = failureExcerpt(log);
 			if (excerpt) say(excerpt);
-			result({ failedAt: failed.name, log, excerpt });
+			await result({ failedAt: failed.name, log, excerpt });
 			process.exit(1);
 		}
 	}
@@ -248,5 +250,5 @@ export async function gate(root, config, given) {
 	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
 	if (tree !== undefined && treeOf(root) === tree) verdict(true);
 	say(`\nGate passed (${Math.round((Date.now() - began) / 1000)}s).`);
-	result({ seconds: Math.round((Date.now() - began) / 1000) });
+	await result({ seconds: Math.round((Date.now() - began) / 1000) });
 }

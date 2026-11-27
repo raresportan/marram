@@ -7,5 +7,8 @@ export function jsonOption(args) {
 	return { json, args: args.filter((arg) => arg !== "--json"), say: json ? (...lines) => console.error(...lines) : (...lines) => console.log(...lines) };
 }
 
-/** Print `result` as the command's JSON document. */
-export const printJson = (result) => process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+/**
+ * Print `result` as the command's JSON document: settled once it's all written. To a pipe, a write that doesn't fit
+ * finishes later (on macOS), so a command that exits next waits for it, or its reader gets the document cut short.
+ */
+export const printJson = (result) => new Promise((done, fail) => process.stdout.write(JSON.stringify(result, null, 2) + "\n", (error) => (error ? fail(error) : done())));
