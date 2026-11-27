@@ -167,6 +167,32 @@ test("a push is judged by the configuration of the tree the full gate ran on, no
 	}
 });
 
+test("a verdict counts only while the configuration gives the stages it ran, which the environment can change", () => {
+	const repo = project();
+	try {
+		// Stages built from the environment: with EXTRA set, the default gate also runs a stage that fails.
+		const [d, f, x] = [stage("d"), stage("f"), stage("x", { code: 1 })];
+		writeFileSync(join(repo.root, "marram.config.mjs"), `const extra = process.env.EXTRA ? [${JSON.stringify(x)}] : [];\nexport default { gate: { logs: "logs", tiers: { fast: [], default: [${JSON.stringify(d)}, ...extra], full: [${JSON.stringify(d)}, ${JSON.stringify(f)}] } } };\n`);
+		repo.commit("one");
+		const finish = (env = {}) => spawnSync("node", [BIN, "hook", "finish"], { cwd: repo.root, encoding: "utf8", env: { ...process.env, ...env } });
+
+		assert.equal(repo.gate("full").status, 0);
+		assert.equal(finish().status, 0, "the full pass covers the default stages as configured");
+		assert.equal(repo.runs(), "df");
+		const extra = finish({ EXTRA: "1" });
+		assert.equal(extra.status, 1, "with EXTRA the default gate has a stage the full pass didn't run");
+		assert.equal(repo.runs(), "dfdx");
+
+		assert.equal(repo.gate().status, 0);
+		assert.equal(repo.runs(), "dfdxd");
+		assert.equal(finish().status, 0, "the default pass is reused for the same stages");
+		assert.equal(finish({ EXTRA: "1" }).status, 1, "but not for others");
+		assert.equal(repo.runs(), "dfdxddx");
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a verdict doesn't keep the commands or environment of the stages it ran", () => {
 	const repo = project({ tiers: { fast: [], default: [stage("d", { env: { TOKEN: "synthetic-secret-value" } })], full: [stage("d", { env: { TOKEN: "synthetic-secret-value" } })] } });
 	try {

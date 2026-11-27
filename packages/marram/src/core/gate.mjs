@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, rmSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectTreeKey, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { projectTreeKey, saltOf, stagesKey, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 
@@ -99,14 +99,13 @@ export async function startRun(logs, tier, date = new Date()) {
 /**
  * Whether the full tier runs each default stage, in order, with the same command, arguments and environment; other
  * stages may come between them. Tiers are the project's, so a full gate needn't contain the default one, and its pass
- * then says nothing about the default gate. Only this answer is kept, not the stages: their env may hold secrets.
+ * then says nothing about the default gate.
  */
 function ranDefault(tiers) {
 	if (!Array.isArray(tiers.default)) return false;
-	const runs = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
-	const wanted = tiers.default.map(runs);
+	const wanted = tiers.default.map(stageText);
 	let found = 0;
-	for (const stage of tiers.full.map(runs)) if (stage === wanted[found]) found++;
+	for (const stage of tiers.full.map(stageText)) if (stage === wanted[found]) found++;
 	return found === wanted.length;
 }
 
@@ -177,8 +176,16 @@ export async function gate(root, config, [tier = "default"]) {
 	// A fast pass doesn't make a change done, so only the default and full gates record a verdict.
 	const tree = tier === "fast" ? undefined : treeOf(root);
 	const project = tree === undefined ? undefined : projectTreeKey(root, tree);
+	// A verdict keeps a key for the stages it ran, and a full pass the key of the default stages it covered: only keys,
+	// since stages' commands and environment may hold secrets. A hook counts it only while the configuration gives the
+	// same stages (see verdictOf).
 	const verdict = (passed, extra = {}) => {
-		if (project !== undefined) updateState(root, (state) => { state.trees[verdictKey(project, tier)] = { passed, tier, at: Date.now(), ...extra }; });
+		if (project === undefined) return;
+		updateState(root, (state) => {
+			const salt = saltOf(state);
+			const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: stagesKey(salt, tiers.default) } : {};
+			state.trees[verdictKey(project, tier)] = { passed, tier, stages: stagesKey(salt, tiers[tier]), at: Date.now(), ...extra, ...covers };
+		});
 	};
 
 	console.log(`Gate (${tier}). Logs: ${dir}`);
@@ -206,6 +213,6 @@ export async function gate(root, config, [tier = "default"]) {
 	report.completedAt = new Date().toISOString();
 	await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
 	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
-	if (tree !== undefined && treeOf(root) === tree) verdict(true, tier === "full" ? { coversDefault: ranDefault(tiers) } : {});
+	if (tree !== undefined && treeOf(root) === tree) verdict(true);
 	console.log(`\nGate passed (${report.stages.reduce((total, stage) => total + stage.seconds, 0)}s).`);
 }

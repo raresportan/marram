@@ -1,6 +1,7 @@
 // What the gate said about each state of the working tree, so a hook doesn't run it again for code it has judged.
 // Kept in the repository's git folder (shared by its worktrees): marram-gate.json.
 import { execFileSync } from "node:child_process";
+import { createHmac, randomBytes } from "node:crypto";
 import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -54,7 +55,7 @@ const statePath = (cwd) => join(resolve(cwd, git(cwd, ["rev-parse", "--git-commo
 export function readState(cwd) {
 	try {
 		const state = JSON.parse(readFileSync(statePath(cwd), "utf8"));
-		return { trees: state.trees ?? {}, sessions: state.sessions ?? {} };
+		return { trees: state.trees ?? {}, sessions: state.sessions ?? {}, salt: state.salt };
 	} catch {
 		return { trees: {}, sessions: {} };
 	}
@@ -93,24 +94,42 @@ export function updateState(cwd, change) {
 		const result = change(state);
 		const newest = (rows) => Object.fromEntries(Object.entries(rows).sort(([, a], [, b]) => b.at - a.at).slice(0, KEEP));
 		const temporary = `${path}.${process.pid}.tmp`;
-		writeFileSync(temporary, JSON.stringify({ trees: newest(state.trees), sessions: newest(state.sessions) }, null, 2));
+		writeFileSync(temporary, JSON.stringify({ salt: state.salt, trees: newest(state.trees), sessions: newest(state.sessions) }, null, 2));
 		renameSync(temporary, path);
 		return result;
 	});
 }
 
+/** One stage as the gate runs it: its command and arguments, and its environment in a fixed order. */
+export const stageText = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+
 /**
- * `{ passed, tier, stage?, log?, coversDefault?, at }` for a tree `tier` (the default gate, or the full one) passed, or
- * failed less than 15 minutes ago. A full pass counts for the default gate when it ran that gate's stages.
+ * What `stages` run, as a key a verdict keeps: an HMAC under the state's own random salt, so the same stages give the
+ * same key in this repository while the key gives away nothing of their commands or environment (which may hold
+ * secrets). Undefined without a list of stages.
  */
-export function verdictOf(cwd, tree, tier = "default") {
-	const trees = readState(cwd).trees;
+export const stagesKey = (salt, stages) => (Array.isArray(stages) ? createHmac("sha256", salt).update(JSON.stringify(stages.map(stageText))).digest("hex") : undefined);
+
+/** The state's salt for stage keys, made the first time one is needed. Call it inside updateState. */
+export const saltOf = (state) => (state.salt ??= randomBytes(32).toString("hex"));
+
+/**
+ * `{ passed, tier, stage?, log?, stages, coversDefault?, at }` for a tree `tier` (the default gate, or the full one)
+ * passed, or failed less than 15 minutes ago, running the stages `tiers` (the configuration as loaded now) gives it. The
+ * configuration may build its stages from the environment, so the same tree can need other stages than a verdict ran:
+ * that verdict doesn't count. A full pass counts for the default gate when it ran the default stages `tiers` gives.
+ */
+export function verdictOf(cwd, tree, tier, tiers) {
+	const { trees, salt } = readState(cwd);
+	if (salt === undefined) return undefined;
+	const key = (stages) => stagesKey(salt, stages);
 	const project = projectTreeKey(cwd, tree);
-	const own = current(trees[verdictKey(project, tier)]);
-	// Decided by the gate from the configuration in the tree it tested, not from the one checked out when this is read.
+	const recorded = current(trees[verdictKey(project, tier)]);
+	const own = recorded !== undefined && recorded.stages !== undefined && recorded.stages === key(tiers?.[tier]) ? recorded : undefined;
 	if (own === undefined && tier === "default") {
 		const full = trees[verdictKey(project, "full")];
-		if (full?.passed && full.coversDefault === true) return full;
+		const wanted = key(tiers?.default);
+		if (full?.passed && wanted !== undefined && full.coversDefault === wanted) return full;
 	}
 	return own;
 }
