@@ -2,16 +2,16 @@
 // Kept in the repository's git folder (shared by its worktrees): marram-gate.json.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, linkSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { STAGE_FIELDS } from "./config.mjs";
+import { withLock, writeWhole } from "./owned.mjs";
 
 // A failure is reused this long, then the gate runs again: a flaky check gets another chance without a code change.
 const FAILURE_TTL_MS = 15 * 60 * 1000;
 const KEEP = 50;
 // What the lock guards takes milliseconds, so a lock this old was left by a hook that was killed.
-const STALE_LOCK_MS = 10_000;
 
 export const git = (cwd, args, env = {}) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } }).replace(/\r?\n$/, "");
 
@@ -62,41 +62,19 @@ export function readState(cwd) {
 	}
 }
 
-/** Run `action` holding `path`'s lock: a directory, since creating one either succeeds or finds it there. */
-function withLock(path, action) {
-	const lock = `${path}.lock`;
-	for (;;) {
-		try {
-			mkdirSync(lock);
-			break;
-		} catch (error) {
-			if (error.code !== "EEXIST") throw error;
-			const age = Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-			if (age > STALE_LOCK_MS) rmSync(lock, { recursive: true, force: true });
-			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-		}
-	}
-	try {
-		return action();
-	} finally {
-		rmSync(lock, { recursive: true, force: true });
-	}
-}
-
 /**
  * Read, change and write the state under its lock, so hooks running at once don't lose each other's changes; returns
- * what `change` returns. Written to a temporary file and renamed over the old one, so a reader never sees half a file.
+ * what `change` returns. Written whole, so a reader never sees half a file. The lock names its holder (owned.mjs), so a
+ * gate that died holding it doesn't keep others out.
  * Only the newest entries are kept.
  */
 export function updateState(cwd, change) {
 	const path = statePath(cwd);
-	return withLock(path, () => {
+	return withLock(`${path}.lock`, () => {
 		const state = readState(cwd);
 		const result = change(state);
 		const newest = (rows) => Object.fromEntries(Object.entries(rows).sort(([, a], [, b]) => b.at - a.at).slice(0, KEEP));
-		const temporary = `${path}.${process.pid}.tmp`;
-		writeFileSync(temporary, JSON.stringify({ trees: newest(state.trees), sessions: newest(state.sessions) }, null, 2));
-		renameSync(temporary, path);
+		writeWhole(path, JSON.stringify({ trees: newest(state.trees), sessions: newest(state.sessions) }, null, 2));
 		return result;
 	});
 }

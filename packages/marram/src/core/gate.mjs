@@ -10,55 +10,27 @@
 // so that failure says nothing about the code. A pause counts as sleep past `gate.sleepGapMs`, 30 seconds by default.
 // The default and full gates record their verdict for the working tree (gate-state.mjs), which the hooks reuse.
 import { spawn } from "node:child_process";
-import { createWriteStream, rmSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { readdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { COVERS_DEFAULT, projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 import { matches } from "./pattern.mjs";
+import { alive, ownFolder, removeAbandoned, removeIfDone, writeWhole } from "./owned.mjs";
 import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
 // A run's folder: its tier, when it started, and its gate's process id, so two gates starting in the same millisecond
 // don't share one. Folders from before the id was added match too, so they're still pruned.
 const RUN = /^gate-(?:fast|default|full)-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)(?:-\d+)?$/;
-// A run's folder while it's being made (see startRun), named for the gate making it.
-const STARTING = /^\.gate-(?:fast|default|full)-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z-(\d+)$/;
-
-// A run's folder holds this while its gate runs: the gate's process id, so pruning leaves the folder of a run that's
-// still going (another gate, in another terminal or hook) and takes one whose gate is gone.
-const RUNNING = "running";
-
-/** Whether the process `pid` is still running. */
-function alive(pid) {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return error.code === "EPERM";
-	}
-}
-
-/**
- * Whether the run in `folder` may still be going: its marker names a process that's running, or the marker is there but
- * can't be read (EACCES, say), so whether it's going isn't known. Only a missing or malformed marker says it's over.
- */
-async function stillGoing(folder) {
-	let text;
-	try {
-		text = await readFile(join(folder, RUNNING), "utf8");
-	} catch (error) {
-		return error.code !== "ENOENT";
-	}
-	const pid = Number(text);
-	return Number.isSafeInteger(pid) && pid > 0 && alive(pid);
-}
+// A run's folder as 0.3 made it, before ownFolder: `.gate-<tier>-<time>-<pid>`. One a dead gate left is still pruned.
+const STARTED_BY_0_3 = /^\.gate-(?:fast|default|full)-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z-(\d+)$/;
 
 /**
  * Removes all but the newest `keep` of the gate's run folders in `logs`, whatever their tier, except a run that may still
- * be going; and a folder a gate was making when it died. Only the gate's own folders (gate-<tier>-<time>, and
- * .gate-<tier>-<time>-<pid> while one is made) are touched: anything else a project keeps there stays.
+ * be going (owned.mjs: inUse); and a folder a gate was making when it died. Only the gate's own folders are touched:
+ * anything else a project keeps there stays.
  */
 export async function pruneLogs(logs, keep) {
 	const entries = (await readdir(logs, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory());
@@ -66,36 +38,20 @@ export async function pruneLogs(logs, keep) {
 		.filter((entry) => RUN.test(entry.name))
 		.map((entry) => ({ name: entry.name, time: RUN.exec(entry.name)[1] }))
 		.sort((a, b) => b.time.localeCompare(a.time) || b.name.localeCompare(a.name));
-	const abandoned = entries.filter((entry) => STARTING.test(entry.name) && !alive(Number(STARTING.exec(entry.name)[1])));
-	await Promise.all([
-		...runs.slice(keep).map(async ({ name }) => {
-			const folder = join(logs, name);
-			if (!(await stillGoing(folder))) await rm(folder, { recursive: true, force: true });
-		}),
-		...abandoned.map((entry) => rm(join(logs, entry.name), { recursive: true, force: true })),
-	]);
+	for (const { name } of runs.slice(keep)) removeIfDone(join(logs, name));
+	removeAbandoned(logs, (name) => RUN.test(name));
+	for (const entry of entries) {
+		const [, pid] = STARTED_BY_0_3.exec(entry.name) ?? [];
+		if (pid !== undefined && !alive(Number(pid))) await rm(join(logs, entry.name), { recursive: true, force: true });
+	}
 }
 
 /**
- * A new run's folder in `logs`, for `tier`, started at `date`, marked as this process's while it runs. It's made under a
- * name pruning keeps clear of while this process lives, and renamed once marked, so another gate pruning at that moment
- * can't take it unmarked. If that fails, what was made goes.
+ * A new run's folder in `logs`, for `tier`, started at `date`: the gate's own while it runs (owned.mjs: ownFolder), so
+ * another gate pruning meanwhile, in another terminal or a hook, leaves it.
  */
 export async function startRun(logs, tier, date = new Date()) {
-	const name = `gate-${tier}-${date.toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
-	const starting = join(logs, `.${name}`);
-	const dir = join(logs, name);
-	try {
-		await mkdir(starting, { recursive: true });
-		await writeFile(join(starting, RUNNING), String(process.pid));
-		await rename(starting, dir);
-	} catch (error) {
-		await rm(starting, { recursive: true, force: true });
-		throw error;
-	}
-	// However the gate ends (a pass, a failure's exit, an interruption), the run is no longer going.
-	process.once("exit", () => rmSync(join(dir, RUNNING), { force: true }));
-	return dir;
+	return ownFolder(logs, `gate-${tier}-${date.toISOString().replace(/[:.]/g, "-")}-${process.pid}`).path;
 }
 
 /**
@@ -153,7 +109,7 @@ export async function gate(root, config, given) {
 	const report = { tier, startedAt: new Date().toISOString(), stages: [], passed: false };
 	// One write at a time: stages running together finish together, and two writes of one file at once can interleave.
 	let saving = Promise.resolve();
-	const saveReport = () => (saving = saving.then(() => writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2))));
+	const saveReport = () => (saving = saving.then(() => writeWhole(join(dir, "report.json"), JSON.stringify(report, null, 2))));
 
 	// A git hook (pre-push) runs with GIT_DIR and the like pointing at this repository; checks that make their own scratch
 	// repositories would act on this one instead.

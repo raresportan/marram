@@ -9,8 +9,9 @@
 // A review section and its commit-msg hook need the project's mistake classes, so they're left to the project.
 // `marram doctor` says what's still missing.
 import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { writeWhole } from "./owned.mjs";
 
 /** Where `path` really is: its longest existing part with links resolved, and the rest as given. */
 function physical(path) {
@@ -98,7 +99,7 @@ export function setUp(from = process.cwd()) {
 		const pkg = join(root, "package.json");
 		const scripts = existsSync(pkg) ? JSON.parse(readFileSync(pkg, "utf8")).scripts : undefined;
 		const text = configText(scripts);
-		writeFileSync(config, text);
+		writeWhole(config, text);
 		done.push(text.includes("fast: []") ? "wrote marram.config.mjs with empty tiers: add the checks your project runs" : "wrote marram.config.mjs, its tiers from package.json's scripts");
 	}
 
@@ -149,8 +150,8 @@ export function setUp(from = process.cwd()) {
 		const prefix = git(root, "rev-parse", "--show-prefix").replace(/\/$/, "");
 		const bin = installed(root, prefix);
 		mkdirSync(hooks, { recursive: true });
-		writeFileSync(prePush, hookText(prefix, bin ?? BIN));
-		chmodSync(prePush, 0o755);
+		// Executable from the moment it's there: git skips a pre-push hook it can't run.
+		writeWhole(prePush, hookText(prefix, bin ?? BIN), { mode: 0o755 });
 		done.push(`wrote ${shown}/pre-push, which gates a push`);
 		if (bin === undefined) done.push("Marram isn't installed here yet, which the hook needs: `npm install --save-dev @raresportan/marram`");
 	}
