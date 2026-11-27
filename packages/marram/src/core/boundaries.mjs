@@ -78,7 +78,9 @@ function imports(source) {
 
 /** A restrict finder for literal module imports and their subpaths, including Node builtin aliases. */
 export function importsOf(...modules) {
-	const normalize = (name) => isBuiltin(name) ? name.replace(/^node:/, "") : name;
+	// A builtin by its node: name, so `fs` and `node:fs` are one module; but only a name that is a builtin as written: a
+	// builtin only reachable as node: (`node:sqlite`, `node:test`) shares its bare name with a package (`sqlite`) that isn't.
+	const normalize = (name) => isBuiltin(name) && !name.startsWith("node:") ? `node:${name}` : name;
 	const names = modules.map(normalize);
 	return (source) => imports(source).flatMap((specifier) => {
 		const target = normalize(specifier.text);

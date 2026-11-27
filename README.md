@@ -234,7 +234,9 @@ finish("rules", problems, "files are touched only in the store");
 
 Run the script from the project root with `node scripts/rules.mjs`. An import of `node:fs/promises` outside the store
 now fails with the file, line and instruction to go through the store. `importsOf(...names)` matches literal ES imports
-(including type-only imports), re-exports and dynamic imports of named modules and their subpaths.
+(including type-only imports), re-exports and dynamic imports of named modules and their subpaths. A builtin matches
+with or without `node:` (`fs`, `node:fs`), but one only reachable as `node:` (`node:sqlite`) doesn't match the package
+of its bare name (`sqlite`).
 
 `find` takes a parsed source file and returns where it does the thing, as `{ line, what }`. A string entry in `allowed` covers all matches in that file.
 

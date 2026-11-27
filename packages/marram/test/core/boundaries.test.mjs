@@ -126,3 +126,22 @@ test("an ownership finder matches literal imports and subpaths at module boundar
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("a builtin only reachable as node: (node:sqlite, node:test) is told apart from the package of the same bare name", () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-imports-"));
+	try {
+		const file = join(root, "consumer.ts");
+		writeFileSync(file, ['import { open } from "sqlite";', 'import "node:sqlite";', 'import "test";', 'import "node:test";', 'import "sqlite/driver";'].join("\n"));
+		assert.deepEqual(importsOf("node:sqlite", "node:test")(parse(file)), [
+			{ line: 2, what: "imports node:sqlite" },
+			{ line: 4, what: "imports node:test" },
+		]);
+		// And the other way: a rule for the package doesn't take in the builtin.
+		assert.deepEqual(importsOf("sqlite")(parse(file)), [
+			{ line: 1, what: "imports sqlite" },
+			{ line: 5, what: "imports sqlite/driver" },
+		]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
