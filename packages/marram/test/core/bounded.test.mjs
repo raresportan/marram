@@ -87,3 +87,25 @@ test("a process the command starts in a group of its own, holding its output, do
 	assert.equal(result.error?.code, "ETIMEDOUT", JSON.stringify(result));
 	assert.ok(Date.now() - started < 1_800, `took ${Date.now() - started} ms`);
 });
+
+test("a command whose output goes to a terminal is told to colour it, unless the project says otherwise or its output is captured", () => {
+	const folder = mkdtempSync(join(tmpdir(), "marram-colour-"));
+	try {
+		const seen = join(folder, "seen.json");
+		const record = `require("node:fs").writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ force: process.env.FORCE_COLOR ?? null, none: process.env.NO_COLOR ?? null }))`;
+		const plain = { ...process.env };
+		delete plain.FORCE_COLOR;
+		delete plain.NO_COLOR;
+		const colourSeen = (options) => {
+			assert.equal(runBounded(process.execPath, ["-e", record], { timeout: 10_000, env: plain, ...options }).status, 0);
+			return JSON.parse(readFileSync(seen, "utf8"));
+		};
+		assert.deepEqual(colourSeen({ terminal: true }), { force: "1", none: null });
+		assert.deepEqual(colourSeen({ terminal: false }), { force: null, none: null });
+		assert.deepEqual(colourSeen({ terminal: true, capture: true }), { force: null, none: null });
+		assert.deepEqual(colourSeen({ terminal: true, env: { ...plain, NO_COLOR: "1" } }), { force: null, none: "1" });
+		assert.deepEqual(colourSeen({ terminal: true, env: { ...plain, FORCE_COLOR: "0" } }), { force: "0", none: null });
+	} finally {
+		rmSync(folder, { recursive: true, force: true });
+	}
+});

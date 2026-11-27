@@ -18,9 +18,14 @@ const WINDOWS = process.platform === "win32";
 /**
  * Run `file` with `args` for at most `timeout` ms: `{ status, signal, error?, stdout, stderr }`, as spawnSync gives it,
  * with `error.code` "ETIMEDOUT" when it was stopped at the timeout. `capture` collects its output as text; otherwise
- * it goes to this process's stderr. `options` are spawn's (cwd, env, windowsVerbatimArguments).
+ * it goes to this process's stderr, and `terminal` says whether that's a terminal. `options` are spawn's (cwd, env,
+ * windowsVerbatimArguments).
  */
-export function runBounded(file, args, { timeout, capture = false, ...options }) {
+export function runBounded(file, args, { timeout, capture = false, terminal = Boolean(process.stderr.isTTY), ...options }) {
+	// Through the supervisor the command's output is a pipe, so a command that colours only for a terminal wouldn't:
+	// where it ends up on one, it's told to, unless the project's env already says either way.
+	const env = options.env ?? process.env;
+	if (!capture && terminal && env.FORCE_COLOR === undefined && env.NO_COLOR === undefined) options = { ...options, env: { ...env, FORCE_COLOR: "1" } };
 	// On stdin rather than the command line, where `ps` would show an env's values (secrets, say) and Windows limits
 	// the length.
 	const spec = JSON.stringify({ file, args, timeout, options });
