@@ -9,8 +9,15 @@
 // A review section and its commit-msg hook need the project's mistake classes, so they're left to the project.
 // `marram doctor` says what's still missing.
 import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+
+/** Where `path` really is: its longest existing part with links resolved, and the rest as given. */
+function physical(path) {
+	let existing = path;
+	while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
+	return join(realpathSync(existing), relative(existing, path));
+}
 
 const BIN = "node_modules/@raresportan/marram/bin/marram.mjs";
 const FAST = ["typecheck", "lint"];
@@ -118,16 +125,19 @@ export function setUp(from = process.cwd()) {
 			return done;
 		}
 		hooks = join(top, ".githooks");
-		git(top, "config", "core.hooksPath", ".githooks");
-		done.push("set core.hooksPath to .githooks");
 	}
 	const shown = posix(set ?? ".githooks");
-	// A hooks folder outside the repository (a global core.hooksPath, say) may be every repository's: a hook written there
-	// would gate pushes in all of them, with this project's paths.
-	const offset = relative(top, hooks);
+	// A hooks folder outside the repository (a global core.hooksPath, or a folder in it that links out) may be every
+	// repository's: a hook written there would gate pushes in all of them, with this project's paths. Where it really is
+	// counts, links followed, so it's checked before anything is set or written.
+	const offset = relative(physical(top), physical(hooks));
 	if (offset === ".." || offset.startsWith(`..${sep}`) || isAbsolute(offset)) {
-		done.push(`core.hooksPath is ${shown}, outside this repository, so other repositories may run its hooks too: no pre-push written there. Add \`marram hook pre-push\` to its pre-push yourself, or give this repository its own (\`git config core.hooksPath .githooks\`) and run \`marram init\` again`);
+		done.push(`core.hooksPath is ${shown}, outside this repository, so other repositories may run its hooks too: no pre-push written there. Add \`marram hook pre-push\` to its pre-push yourself, or give this repository a folder of its own (\`git config core.hooksPath .githooks\`, not a link) and run \`marram init\` again`);
 		return done;
+	}
+	if (set === undefined) {
+		git(top, "config", "core.hooksPath", ".githooks");
+		done.push("set core.hooksPath to .githooks");
 	}
 	const prePush = join(hooks, "pre-push");
 	if (existsSync(prePush)) {

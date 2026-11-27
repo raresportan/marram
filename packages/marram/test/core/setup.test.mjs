@@ -110,6 +110,21 @@ test("init writes no hook into a hooks folder outside the repository, which othe
 	}
 });
 
+test("init writes no hook into a hooks folder that links outside the repository", () => {
+	const repo = repository();
+	const shared = realpathSync(mkdtempSync(join(tmpdir(), "marram-shared-hooks-")));
+	try {
+		symlinkSync(shared, join(repo.root, ".githooks"), "junction");
+		const result = repo.marram(repo.root, "init");
+		assert.match(result.stdout, /outside this repository, so other repositories may run its hooks too: no pre-push written there/);
+		assert.ok(!existsSync(join(shared, "pre-push")));
+		assert.equal(repo.git("config", "core.hooksPath"), "", "nothing is set for a folder it won't write to");
+	} finally {
+		repo.remove();
+		rmSync(shared, { recursive: true, force: true });
+	}
+});
+
 test("a project in a folder of the repository gets a hook that gates it from its folder, with Marram from its node_modules", () => {
 	const repo = repository();
 	try {
