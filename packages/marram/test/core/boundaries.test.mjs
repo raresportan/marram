@@ -102,7 +102,9 @@ test("files in no layer that import each other end the walk", () => {
 test("a listed import is allowed, and the list only shrinks", () => {
 	const bad = { "features/a/client/V.tsx": `import { x } from "../host/s.ts";`, "features/a/host/s.ts": "export const x = 1;" };
 	assert.deepEqual(lint(bad, { "features/a/client/V.tsx -> ../host/s.ts": "being moved" }), []);
-	assert.deepEqual(lint({ "features/a/host/s.ts": "" }, { "features/a/client/V.tsx -> ../host/s.ts": "being moved" }), ["features/a/client/V.tsx -> ../host/s.ts is no longer imported that way: remove it from rules.mjs"]);
+	assert.deepEqual(lint({ "features/a/client/V.tsx": "", "features/a/host/s.ts": "" }, { "features/a/client/V.tsx -> ../host/s.ts": "being moved" }), ["features/a/client/V.tsx -> ../host/s.ts is no longer imported that way: remove it from rules.mjs"]);
+	// The file itself deleted, as the other ratchets tell it.
+	assert.deepEqual(lint({ "features/a/host/s.ts": "" }, { "features/a/client/V.tsx -> ../host/s.ts": "being moved" }), ["features/a/client/V.tsx -> ../host/s.ts is gone: remove it from rules.mjs"]);
 });
 
 test("an ownership finder matches literal imports and subpaths at module boundaries", () => {

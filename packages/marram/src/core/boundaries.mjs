@@ -105,7 +105,7 @@ export function importBoundaryRule({ layers, allowed = {} }) {
 	return {
 		allowed,
 		fix: "move the code to a layer that may have it",
-		stale: () => "is no longer imported that way",
+		stale: "is no longer imported that way",
 		find: (source, { file, files }) => imports(source).flatMap((specifier) => {
 			const wrong = problem(file, specifier.text, layers, files);
 			return wrong === undefined ? [] : [{ key: `${file} -> ${specifier.text}`, line: lineOf(source, specifier), what: wrong }];
