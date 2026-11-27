@@ -67,9 +67,16 @@ export function probe(root, config, names) {
 			if (result.error?.code === "ETIMEDOUT") throw new Error(`probes.setup didn't finish within ${timeoutMs} ms`);
 			if (result.status !== 0) throw new Error(`probes.setup failed: ${result.error?.message ?? excerpt(result.output)}`);
 		}
+		const snapshot = snapshotOf(copy, scratch, link.map((path) => repoPath(root, path)));
 		const verdicts = chosen.map((fault) => {
 			const started = Date.now();
-			const verdict = judge(root, copy, project, fault, timeoutMs, join(scratch, "observations.jsonl"));
+			let verdict;
+			try {
+				verdict = judge(root, copy, project, fault, timeoutMs, join(scratch, "observations.jsonl"));
+			} finally {
+				// The next fault runs in the copy as setup left it, whatever this one's checks wrote or rewrote.
+				snapshot.restore();
+			}
 			const line = { caught: `✓ ${fault.name}: caught (${Date.now() - started} ms)`, missed: `✗ ${fault.name}: missed: the check passed with the fault in place`, inconclusive: `? ${fault.name}: inconclusive: ${verdict.detail}` }[verdict.state];
 			console.log(line);
 			return { name: fault.name, ...verdict };
@@ -125,7 +132,10 @@ function choose(faults, names) {
 	return names.length === 0 ? faults : faults.filter((fault) => names.includes(fault.name));
 }
 
-/** `{ state, detail }`: caught, missed or inconclusive. The patch is taken back out before this returns. */
+/**
+ * `{ state, detail }`: caught, missed or inconclusive. The files the patch touched are put back, times included, before
+ * this returns; the caller restores the rest of the copy.
+ */
 function judge(root, copy, project, fault, timeoutMs, observations) {
 	const cwd = join(project, fault.cwd ?? ".");
 	const check = () => {
@@ -154,13 +164,44 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 	try {
 		faulty = check();
 	} finally {
-		// What the next fault runs against must be the clean copy again.
-		execFileSync("git", ["apply", "-R", "--whitespace=nowarn", patch], { cwd: copy, stdio: "ignore" });
-		for (const [file, { atimeMs, mtimeMs }] of times) utimesSync(file, atimeMs / 1000, mtimeMs / 1000);
+		// The patch comes out with the rest of what the fault changed (snapshot.restore), and the files it touched get
+		// their times back once they're restored: done here, after a restore of its own.
+		restoreTouched(copy, touched);
+		for (const [file, { atimeMs, mtimeMs }] of times) if (existsSync(file)) utimesSync(file, atimeMs / 1000, mtimeMs / 1000);
 	}
 	if (faulty.state === "passed") return { state: "missed" };
 	if (faulty.state === "expected") return { state: "caught" };
 	return { state: "inconclusive", detail: `failed, but not as expected: ${faulty.detail}` };
+}
+
+/**
+ * The copy as it is now (after setup) recorded in an index of its own in `scratch`, ignored files included, so build
+ * output counts; `linked` paths (from the repository's root) aside, since they're the working tree's, shared. Its
+ * `restore` puts the copy back: each file that differs from the record is checked out again, and what's new is removed.
+ */
+function snapshotOf(copy, scratch, linked) {
+	const env = { ...process.env, GIT_INDEX_FILE: join(scratch, "snapshot.index") };
+	const run = (...args) => execFileSync("git", args, { cwd: copy, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 });
+	const paths = ["--", ".", ...linked.map((path) => `:(exclude,top)${path}`)];
+	run("add", "-A", "-f", ...paths);
+	return {
+		restore() {
+			// Changed or deleted since the record: checked out from it again. The record's file stats are refreshed first,
+			// so a file put back with the same contents (and its times, by judge) isn't taken for changed and rewritten.
+			spawnSync("git", ["update-index", "-q", "--refresh"], { cwd: copy, env, stdio: "ignore" });
+			const changed = run("diff-files", "--name-only", "-z", ...paths).split("\0").filter(Boolean);
+			for (let i = 0; i < changed.length; i += 500) run("checkout-index", "-f", "-q", "--", ...changed.slice(i, i + 500));
+			// New since: removed, a new folder whole.
+			for (const path of run("ls-files", "--others", "--directory", "-z", ...paths).split("\0").filter(Boolean)) rmSync(join(copy, path), { recursive: true, force: true });
+		},
+	};
+}
+
+/** The tracked files `touched` put back as the copy's index has them, where a patch changed or a check rewrote them. */
+function restoreTouched(copy, touched) {
+	const tracked = touched.filter((file) => spawnSync("git", ["ls-files", "--error-unmatch", "--", file], { cwd: copy, stdio: "ignore" }).status === 0);
+	if (tracked.length > 0) spawnSync("git", ["checkout-index", "-f", "-q", "--", ...tracked], { cwd: copy, stdio: "ignore" });
+	for (const file of touched) if (!tracked.includes(file)) rmSync(join(copy, file), { force: true });
 }
 
 /**

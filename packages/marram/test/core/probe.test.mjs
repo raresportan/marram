@@ -227,6 +227,26 @@ test("a patch that renames a file puts it back with its times", () => {
 	}
 });
 
+test("each fault runs in the copy as setup left it: files a check made are gone, and a patched file a check rewrote is put back", () => {
+	// The first check leaves a file behind; the second fails its clean run if that file is there.
+	const leaves = 'require("node:fs").writeFileSync("generated.txt", "");\n' + CHECK;
+	const minds = 'if (require("node:fs").existsSync("generated.txt")) throw new Error("left over from another fault");\n' + CHECK;
+	// The third rewrites the file the patch changed (a formatter, say), so the patch can't be taken out by reversing it.
+	const rewrites = 'const value = require("./value.cjs");\nif (value === 0) require("node:fs").appendFileSync("value.cjs", "// formatted\\n");\nrequire("node:assert/strict").equal(value, 1, "stored value");\n';
+	const fault = (name, file) => `{ name: "${name}", patch: "probes/zero.patch", run: ["node", "${file}"], expect: /stored value/ }`;
+	const repo = project([fault("leaves a file", "leaves.cjs"), fault("minds leftovers", "minds.cjs"), fault("rewrites the patched file", "rewrites.cjs"), fault("runs after the rewrite", "minds.cjs")].join(", "));
+	try {
+		repo.write("leaves.cjs", leaves);
+		repo.write("minds.cjs", minds);
+		repo.write("rewrites.cjs", rewrites);
+		const result = repo.probe();
+		assert.equal(result.status, 0, result.stdout + result.stderr);
+		for (const name of ["leaves a file", "minds leftovers", "rewrites the patched file", "runs after the rewrite"]) assert.match(result.stdout, new RegExp(`^✓ ${name}: caught`, "m"), result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a missing patch is inconclusive, and the faults after it still run", () => {
 	const missing = '{ name: "a lost patch", patch: "probes/lost.patch", run: ["node", "check.cjs"], expect: /stored value/ }';
 	const repo = project(`${missing}, ${BY_COMMAND}`);
