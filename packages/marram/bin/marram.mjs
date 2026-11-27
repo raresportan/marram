@@ -20,18 +20,19 @@ import { gate } from "../src/core/gate.mjs";
 import { hook } from "../src/core/hook.mjs";
 import { init } from "../src/core/init.mjs";
 import { doctor } from "../src/core/doctor.mjs";
+import { exitWhenWritten } from "../src/core/json-output.mjs";
 
 const [command, ...args] = process.argv.slice(2);
 const commands = { gate, hook, probe, replay, "map-diff": mapDiff, "commit-lint": lintCommits, "review-summary": reviewSummary };
 // guard-diff starts from the repository: a project's configuration may be what the branch deleted or broke.
 if (command === "guard-diff") {
 	await guardDiff(process.cwd(), args);
-	process.exit(0);
+	await exitWhenWritten(0);
 }
 // init sets up what isn't there yet, and doctor reports on a config that may not load.
 if (command === "init" || command === "doctor") {
 	await (command === "init" ? init : doctor)(process.cwd());
-	process.exit(0);
+	await exitWhenWritten(0);
 }
 if (!(command in commands)) {
 	console.error("Usage: marram init | marram doctor | marram probe [fault]… | marram guard-diff <base> [--map <map>]… | marram replay <base> <test-file> <test-name> <expected assertion message> | marram replay <base> <test-file> --expect <text> -- <command>… | marram map-diff <base> <map> | marram gate [fast | full] | marram hook <mode> | marram commit-lint <message file> | --range <from>..<to> | marram review-summary [--since <ref>] (gate, probe, guard-diff and review-summary take --json)");

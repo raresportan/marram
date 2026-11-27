@@ -12,3 +12,9 @@ export function jsonOption(args) {
  * finishes later (on macOS), so a command that exits next waits for it, or its reader gets the document cut short.
  */
 export const printJson = (result) => new Promise((done, fail) => process.stdout.write(JSON.stringify(result, null, 2) + "\n", (error) => (error ? fail(error) : done())));
+
+/**
+ * Exit with `code` once what the command wrote to stdout and stderr is all written: to a pipe, a write that doesn't fit
+ * finishes later (on macOS), and exiting first cuts the output short. Never settles, so a caller that awaits it stops.
+ */
+export const exitWhenWritten = (code) => new Promise(() => process.stdout.write("", () => process.stderr.write("", () => process.exit(code))));

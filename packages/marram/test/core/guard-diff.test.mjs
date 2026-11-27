@@ -400,6 +400,22 @@ test("with --json, guard-diff's sections are JSON", () => {
 	}
 });
 
+test("a text report bigger than a pipe holds reaches a reader that's slow to drain it, whole", { skip: process.platform === "win32" && "reads through sh" }, () => {
+	const repo = repository();
+	try {
+		// 3000 tests removed: one line each, about 200 KB; a pipe holds 64 KB.
+		const tests = Array.from({ length: 3000 }, (_, i) => `test("reads the value number ${i} from the store and checks it", () => assert.ok(${i}));`).join("\n");
+		repo.write("packages/app/test/many.test.mjs", tests + "\n");
+		repo.commit();
+		repo.write("packages/app/test/many.test.mjs", 'test("one", () => assert.ok(1));\n');
+		const result = spawnSync("sh", ["-c", `"${process.execPath}" "${BIN}" guard-diff main | (sleep 1; cat)`], { cwd: repo.root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+		assert.equal(result.stdout.split("\n").filter((line) => line.startsWith("  removed: ")).length, 3000, `got ${result.stdout.length} bytes`);
+		assert.match(result.stdout, /\nNot compared: .*\n$/);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a configuration that prints while it loads is still read", () => {
 	const repo = repository();
 	try {

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { COVERS_DEFAULT, projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
-import { jsonOption, printJson } from "./json-output.mjs";
+import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
 // A run's folder: its tier, when it started, and its gate's process id, so two gates starting in the same millisecond
@@ -242,7 +242,7 @@ export async function gate(root, config, given) {
 		if (interrupted) {
 			say(`\nGate interrupted at ${group.map((stage) => stage.name).join(", ")}.`);
 			await result({ interrupted: true });
-			process.exit(1);
+			await exitWhenWritten(1);
 		}
 		const failed = group.find((_, i) => !results[i]);
 		if (failed !== undefined) {
@@ -252,7 +252,7 @@ export async function gate(root, config, given) {
 			const excerpt = failureExcerpt(log);
 			if (excerpt) say(excerpt);
 			await result({ failedAt: failed.name, log, excerpt });
-			process.exit(1);
+			await exitWhenWritten(1);
 		}
 	}
 	report.passed = true;
