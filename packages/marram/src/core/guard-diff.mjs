@@ -307,6 +307,11 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 	const [was, is] = [resolve(before, wasStages), resolve(now, isStages)];
 	const named = (stages) => new Set(stages.map(({ id }) => id));
 	const [hadStage, hasStage] = [named(wasStages), named(isStages)];
+	// A stage whose command is the same on both sides runs a script it didn't, or stops running one, only because where it
+	// runs changed: a workspace put into or taken out of the workspaces --workspaces runs in.
+	const runs = (stages) => new Map(stages.map(({ id, run }) => [id, JSON.stringify(run)]));
+	const [ranWith, runsWith] = [runs(wasStages), runs(isStages)];
+	const sameCommand = (stage) => ranWith.has(stage) && ranWith.get(stage) === runsWith.get(stage);
 	const removed = ({ name, where, body }) => `script ${name} (${where}): removed (was ${body})`;
 	const added = ({ name, where, body }) => `script ${name} (${where}): added: ${body}`;
 	const lines = new Set();
@@ -314,7 +319,9 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 		const current = is.get(key);
 		const stage = JSON.parse(key)[0];
 		if (current === undefined) {
-			if (old.body !== undefined && hasStage.has(stage) && scriptsAt(now, old.folder)[old.name] === undefined) lines.add(removed(old));
+			if (old.body === undefined || !hasStage.has(stage)) continue;
+			if (scriptsAt(now, old.folder)[old.name] === undefined) lines.add(removed(old));
+			else if (sameCommand(stage)) lines.add(`script ${old.name} (${old.where}): no longer run (${old.body})`);
 		} else if (current.body === undefined) {
 			if (old.body !== undefined) lines.add(removed(old));
 		} else if (old.body === undefined) {
@@ -326,7 +333,9 @@ function scriptChanges(before, now, project, wasStages, isStages) {
 	}
 	for (const [key, current] of is) {
 		const stage = JSON.parse(key)[0];
-		if (!was.has(key) && current.body !== undefined && hadStage.has(stage) && scriptsAt(before, current.folder)[current.name] === undefined) lines.add(added(current));
+		if (was.has(key) || current.body === undefined || !hadStage.has(stage)) continue;
+		if (scriptsAt(before, current.folder)[current.name] === undefined) lines.add(added(current));
+		else if (sameCommand(stage)) lines.add(`script ${current.name} (${current.where}): now run: ${current.body}`);
 	}
 	return [...lines].sort();
 }

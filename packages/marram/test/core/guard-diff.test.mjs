@@ -344,6 +344,24 @@ test("a command run in every workspace (--workspaces, -ws) has its script compar
 	}
 });
 
+test("a workspace taken out of (or put into) package.json's workspaces, under the same --workspaces command, is reported", () => {
+	const repo = repository();
+	try {
+		const tiers = { fast: [], default: [{ name: "lint", run: ["npm", "run", "lint", "--workspaces"] }], full: [] };
+		repo.write("marram.config.mjs", repo.config({ ...repo.rootGate, tiers }));
+		repo.write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*", "!packages/third"] }));
+		repo.write("packages/other/package.json", JSON.stringify({ name: "other", scripts: { lint: "eslint ." } }));
+		repo.write("packages/third/package.json", JSON.stringify({ name: "third", scripts: { lint: "eslint src" } }));
+		repo.commit();
+		repo.write("package.json", JSON.stringify({ name: "root", workspaces: ["packages/*", "!packages/other"] }));
+		const result = repo.diff();
+		assert.match(result.stdout, /^ {2}script lint \(packages\/other\/package\.json\): no longer run \(eslint \.\)$/m, result.stdout);
+		assert.match(result.stdout, /^ {2}script lint \(packages\/third\/package\.json\): now run: eslint src$/m, result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a configuration that prints while it loads is still read", () => {
 	const repo = repository();
 	try {
