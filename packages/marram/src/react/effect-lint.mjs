@@ -13,11 +13,26 @@ import { lineOf } from "../core/ratchet.mjs";
 
 const EFFECTS = new Set(["useEffect", "useLayoutEffect"]);
 
-/** The hook `call` calls, bare or on a namespace (`useState`, `React.useState`), or undefined. */
-function hookOf(call) {
+/** The names `source` gives React's own module: `React`, and what it imports from "react" whole (`* as R`, `R`). */
+function reactNamespaces(source) {
+	const names = new Set(["React"]);
+	for (const statement of source.statements) {
+		if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "react") continue;
+		const clause = statement.importClause;
+		if (clause?.name !== undefined) names.add(clause.name.text);
+		if (clause?.namedBindings !== undefined && ts.isNamespaceImport(clause.namedBindings)) names.add(clause.namedBindings.name.text);
+	}
+	return names;
+}
+
+/**
+ * The hook `call` calls, bare or on React's namespace (`useState`, `React.useState`), or undefined. A method of the
+ * same name on anything else (`store.useEffect(…)`) isn't React's.
+ */
+function hookOf(call, namespaces) {
 	const callee = call.expression;
 	if (ts.isIdentifier(callee)) return callee.text;
-	if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) return callee.name.text;
+	if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && namespaces.has(callee.expression.text)) return callee.name.text;
 	return undefined;
 }
 
@@ -33,12 +48,12 @@ function eachOwn(scope, see) {
 }
 
 /** The setters `const [value, setValue] = useState(…)` declares in `scope` itself: its component's or hook's state. */
-function setters(scope) {
+function setters(scope, namespaces) {
 	const found = new Set();
 	eachOwn(scope, (node) => {
 		if (!ts.isVariableDeclaration(node) || !ts.isArrayBindingPattern(node.name) || node.initializer === undefined || !ts.isCallExpression(node.initializer)) return;
 		const setter = node.name.elements[1];
-		if (hookOf(node.initializer) === "useState" && setter !== undefined && ts.isBindingElement(setter) && ts.isIdentifier(setter.name)) found.add(setter.name.text);
+		if (hookOf(node.initializer, namespaces) === "useState" && setter !== undefined && ts.isBindingElement(setter) && ts.isIdentifier(setter.name)) found.add(setter.name.text);
 	});
 	return found;
 }
@@ -58,6 +73,7 @@ function directCalls(body, names) {
 /** Where an effect in `source` sets its component's state in its own body: `{ line, effect, setter }`. */
 export function effectSets(source) {
 	const found = [];
+	const namespaces = reactNamespaces(source);
 	// Each component or hook (and the file itself) with its own setters, so one component's setter isn't another's.
 	const scopes = [source];
 	const collect = (node) => {
@@ -66,13 +82,13 @@ export function effectSets(source) {
 	};
 	ts.forEachChild(source, collect);
 	for (const scope of scopes) {
-		const own = setters(scope);
+		const own = setters(scope, namespaces);
 		if (own.size === 0) continue;
 		eachOwn(scope, (node) => {
-			if (!ts.isCallExpression(node) || !EFFECTS.has(hookOf(node))) return;
+			if (!ts.isCallExpression(node) || !EFFECTS.has(hookOf(node, namespaces))) return;
 			const effect = node.arguments[0];
 			if (effect === undefined || !(ts.isArrowFunction(effect) || ts.isFunctionExpression(effect))) return;
-			for (const call of directCalls(effect.body, own)) found.push({ line: lineOf(source, call), effect: hookOf(node), setter: call.expression.text });
+			for (const call of directCalls(effect.body, own)) found.push({ line: lineOf(source, call), effect: hookOf(node, namespaces), setter: call.expression.text });
 		});
 	}
 	return found.sort((a, b) => a.line - b.line);
