@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, rmSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { COVERS_DEFAULT, projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
 import { jsonOption, printJson } from "./json-output.mjs";
@@ -215,7 +215,7 @@ export async function gate(root, config, given) {
 		if (project === undefined) return;
 		const key = stageKeys(root, config.gate, { create: true });
 		const stages = key(tiers[tier]);
-		const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: key(tiers.default) } : {};
+		const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: key(tiers.default, COVERS_DEFAULT) } : {};
 		updateState(root, (state) => { state.trees[verdictKey(project, tier, stages)] = { passed, tier, stages, at: Date.now(), ...extra, ...covers }; });
 	};
 

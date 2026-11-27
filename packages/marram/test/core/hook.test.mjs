@@ -157,6 +157,28 @@ test("a full pass counts for the default gate only when it ran the default stage
 	}
 });
 
+test("a full pass recorded before coverage compared groups (0.3.0) no longer answers for the default gate", () => {
+	const repo = project();
+	try {
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		const statePath = join(repo.root, ".git", "marram-gate.json");
+		const before = JSON.parse(readFileSync(statePath, "utf8"));
+		const [defaultSlot, defaultPass] = Object.entries(before.trees).find(([, verdict]) => verdict.tier === "default");
+		assert.equal(repo.gate("full").status, 0);
+		// As 0.3.0 recorded it: the full pass covering the default with the default stages' own key, and no default pass.
+		const state = JSON.parse(readFileSync(statePath, "utf8"));
+		delete state.trees[defaultSlot];
+		for (const verdict of Object.values(state.trees)) if (verdict.tier === "full") verdict.coversDefault = defaultPass.stages;
+		writeFileSync(statePath, JSON.stringify(state));
+		const runs = repo.runs();
+		assert.equal(repo.finish().status, 0);
+		assert.equal(repo.runs(), runs + "d", "finish runs the default gate rather than reuse the old full pass");
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a push is judged by the configuration of the tree the full gate ran on, not the one checked out now", () => {
 	const build = stage("b");
 	const repo = project({ tiers: { fast: [], default: [stage("t", { code: 1 })], full: [build] } });
