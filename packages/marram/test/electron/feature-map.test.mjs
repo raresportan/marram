@@ -66,6 +66,14 @@ test("the static check reads a map saved with CRLF endings or trailing spaces as
 	assert.deepEqual(read(map), { broken: [], unmarked: ["Unmarked"], features: 3, gaps: 1 });
 });
 
+test("a sticky citation pattern matches from the start of a citation only, as it says", () => {
+	// /external/y is a citation that starts with "external"; one that only has it further on is a journey's.
+	const map = ["- **Checkout**", '  - ✅ checkout › "external integration"', "  - ✅ external › payments"].join("\n");
+	const { broken } = read(map, [{ pattern: /external/y, broken: () => undefined }]);
+	assert.equal(broken.length, 1, broken.join("; "));
+	assert.match(broken[0], /^line 2: no journey in "checkout › /);
+});
+
 test("a project's citation pattern with the g or y flag matches every line it should, not every other one", () => {
 	const map = ["- **Server.**", "  - ✅ server › a.ts", "  - ✅ server › b.ts", "  - ✅ server › c.ts"].join("\n");
 	for (const pattern of [/^server › (\S+)$/g, /server › (\S+)$/y]) {

@@ -30,6 +30,7 @@ function checksByFunction(folder, session) {
 /** What's wrong with a `✅` line's citation, or undefined when it names something that exists. */
 function brokenCitation(cited, journeys, checksOf, citations) {
 	for (const { pattern, broken } of citations) {
+		pattern.lastIndex = 0;
 		const match = pattern.exec(cited);
 		if (match !== null)
 			return broken(match);
@@ -48,9 +49,9 @@ function brokenCitation(cited, journeys, checksOf, citations) {
  */
 export function readFeatureMap({ map, folder, journeys, citations = [], session = "session" }) {
 	const byFunction = checksByFunction(folder, session);
-	// Without g or y: with either, exec starts where the last match ended, so a citation matching after one that did
-	// would be missed, and read as a journey's.
-	citations = citations.map(({ pattern, broken }) => ({ pattern: new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, "")), broken }));
+	// Copies, with their flags (sticky still means "from the start"), each matched from a citation's start: with g or y,
+	// exec starts where the last match ended, so a citation after one that matched would be missed.
+	citations = citations.map(({ pattern, broken }) => ({ pattern: new RegExp(pattern.source, pattern.flags), broken }));
 	const isJourney = (name) => Object.values(journeys).some((journey) => journey.run.name === name);
 	const helpers = [...byFunction].filter(([name]) => !isJourney(name)).flatMap(([, names]) => names);
 	const checksOf = (journey) => [...(byFunction.get(journeys[journey].run.name) ?? []), ...helpers];

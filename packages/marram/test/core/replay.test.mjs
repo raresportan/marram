@@ -277,14 +277,14 @@ test("replay judges a test run by any runner's command: it fails on the base wit
 	}
 });
 
-test("replay's command form needs --expect and a command", () => {
+test("replay's command form needs --expect and a command, after --: without it, --expect isn't taken for a test's name", () => {
 	const repo = repository();
 	const { NODE_TEST_CONTEXT, ...env } = process.env;
 	const marram = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 	try {
 		writeFileSync(join(repo.root, "marram.config.mjs"), "export default {}");
 		repo.commit();
-		for (const args of [["HEAD", "check.cjs", "--", "node", "check.cjs"], ["HEAD", "check.cjs", "--expect", "x", "--"], ["HEAD", "--expect", "x", "--", "node"]]) {
+		for (const args of [["HEAD", "check.cjs", "--", "node", "check.cjs"], ["HEAD", "check.cjs", "--expect", "x", "--"], ["HEAD", "--expect", "x", "--", "node"], ["HEAD", "check.cjs", "--expect", "x"]]) {
 			const result = spawnSync(process.execPath, [marram, "replay", ...args], { cwd: repo.root, env, encoding: "utf8" });
 			assert.equal(result.status, 1, args.join(" "));
 			assert.match(result.stderr, /--expect "<output text>" -- <command>/, args.join(" "));

@@ -362,6 +362,28 @@ test("a workspace taken out of (or put into) package.json's workspaces, under th
 	}
 });
 
+test("stages that now run together, or no longer do, are reported: a stage run alongside another no longer waits for it", () => {
+	const repo = repository();
+	try {
+		const build = { name: "build", run: ["npm", "run", "build"] };
+		const [unit, journeys] = repo.appGate.tiers.default;
+		const together = (stage) => ({ ...stage, concurrent: true });
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [build, unit, journeys], full: [build, together(unit), together(journeys)] } }));
+		repo.commit();
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [together(build), together(unit), journeys], full: [build, unit, journeys] } }));
+		const result = repo.diff();
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /^ {2}default: run together now build, unit \(was none\)$/m);
+		assert.match(result.stdout, /^ {2}full: run together now none \(was unit, journeys\)$/m);
+		// Marked on its own, a stage still runs alone: nothing to report.
+		repo.commit();
+		repo.write("packages/app/marram.config.mjs", repo.config({ tiers: { ...repo.appGate.tiers, default: [together(build), together(unit), journeys], full: [build, unit, together(journeys)] } }));
+		assert.match(repo.diff().stdout, /^No guard changes since /m);
+	} finally {
+		repo.remove();
+	}
+});
+
 test("with --json, guard-diff's sections are JSON", () => {
 	const repo = repository();
 	try {
@@ -373,6 +395,22 @@ test("with --json, guard-diff's sections are JSON", () => {
 		assert.match(report.mergeBase, /^[0-9a-f]{40}$/);
 		assert.deepEqual(report.sections, [{ title: "(root)", lines: ["prePush: full → default"] }]);
 		assert.match(report.notCompared, /^Not compared: /);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a text report bigger than a pipe holds reaches a reader that's slow to drain it, whole", { skip: process.platform === "win32" && "reads through sh" }, () => {
+	const repo = repository();
+	try {
+		// 3000 tests removed: one line each, about 200 KB; a pipe holds 64 KB.
+		const tests = Array.from({ length: 3000 }, (_, i) => `test("reads the value number ${i} from the store and checks it", () => assert.ok(${i}));`).join("\n");
+		repo.write("packages/app/test/many.test.mjs", tests + "\n");
+		repo.commit();
+		repo.write("packages/app/test/many.test.mjs", 'test("one", () => assert.ok(1));\n');
+		const result = spawnSync("sh", ["-c", `"${process.execPath}" "${BIN}" guard-diff main | (sleep 1; cat)`], { cwd: repo.root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+		assert.equal(result.stdout.split("\n").filter((line) => line.startsWith("  removed: ")).length, 3000, `got ${result.stdout.length} bytes`);
+		assert.match(result.stdout, /\nNot compared: .*\n$/);
 	} finally {
 		repo.remove();
 	}
@@ -514,6 +552,35 @@ test("guard-diff reports tests removed, newly skipped or with fewer assertions, 
 		].join("\n"), result.stdout);
 		assert.doesNotMatch(result.stdout, /moved\.test|renamed\.test/, "a test file renamed with its tests is no change");
 		assert.doesNotMatch(result.stdout, /Not compared: test files/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a test run alone in a test file the branch adds is reported, as it stops the others running", () => {
+	const repo = repository();
+	try {
+		repo.write("packages/app/test/value.test.mjs", 'test("reads one", () => assert.ok(1));\n');
+		repo.commit();
+		repo.write("packages/app/test/focus.test.mjs", 'it.only("just this", () => assert.ok(1));\nit("and this", () => assert.ok(2));\n');
+		repo.write("packages/app/test/plain.test.mjs", 'it("new", () => assert.ok(1));\n');
+		const result = repo.diff();
+		assert.equal(result.stdout.split("\nTests\n")[1]?.split("\n\n")[0], "  now only: packages/app/test/focus.test.mjs › just this (in a new file)", result.stdout);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a file renamed to a test file's name, with a test run alone, is reported as a new test file", () => {
+	const repo = repository();
+	try {
+		const focused = 'it.only("just this", () => assert.ok(1));\nit("and this", () => assert.ok(2));\n';
+		repo.write("packages/app/src/candidate.mjs", focused);
+		repo.commit();
+		rmSync(join(repo.root, "packages/app/src/candidate.mjs"));
+		repo.write("packages/app/src/candidate.test.mjs", focused);
+		const result = repo.diff();
+		assert.equal(result.stdout.split("\nTests\n")[1]?.split("\n\n")[0], "  now only: packages/app/src/candidate.test.mjs › just this (newly named as a test file)", result.stdout);
 	} finally {
 		repo.remove();
 	}

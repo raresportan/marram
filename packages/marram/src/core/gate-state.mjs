@@ -100,8 +100,13 @@ export function updateState(cwd, change) {
 	});
 }
 
-/** One stage as the gate runs it: its command and arguments, and its environment in a fixed order. */
-export const stageText = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+/**
+ * One stage as the gate runs it: its command and arguments, its environment in a fixed order, and whether it runs
+ * together with the marked stages next to it. That last one counts: a full gate that runs a test alongside the build it
+ * reads passes on a build from before, so it can't answer for a default gate that runs them one after the other. Left
+ * out when unmarked, so a stage's key stays what it was.
+ */
+export const stageText = ({ run, env = {}, concurrent }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)), ...(concurrent === true ? ["concurrent"] : [])]);
 
 // The secret that stage keys are made with, in its own file beside the state and readable only by its owner: the state
 // holds keys, and with the secret beside them a reader could check guesses at a stage's low-entropy values.
@@ -168,8 +173,19 @@ export function stageKeys(cwd, gate, { create = false } = {}) {
 	const secret = secretOf(cwd, create);
 	if (secret === undefined) return () => undefined;
 	const inherited = [...(gate?.env ?? [])].sort().map((name) => [name, process.env[name] ?? null]);
-	return (stages) => (Array.isArray(stages) ? createHmac("sha256", secret).update(JSON.stringify([stages.map(stageText), inherited])).digest("hex") : undefined);
+	return (stages, purpose) => {
+		if (!Array.isArray(stages)) return undefined;
+		const over = [stages.map(stageText), inherited];
+		return createHmac("sha256", secret).update(JSON.stringify(purpose === undefined ? over : [purpose, ...over])).digest("hex");
+	};
 }
+
+/**
+ * What a full pass's `coversDefault` is keyed for: a key of its own, versioned, so a full pass recorded before coverage
+ * compared the groups stages run in (0.3.0, which keyed it as the default stages' own key) doesn't answer for the
+ * default gate.
+ */
+export const COVERS_DEFAULT = "covers-default:2";
 
 /**
  * `{ passed, tier, stage?, log?, stages, coversDefault?, at }` for a tree `tier` (the default gate, or the full one)
@@ -187,7 +203,8 @@ export function verdictOf(cwd, tree, tier, gate) {
 	const own = current(trees[verdictKey(project, tier, wanted)]);
 	if (own === undefined && tier === "default") {
 		const full = `${verdictKey(project, "full")}:`;
-		const covering = Object.entries(trees).find(([slot, verdict]) => slot.startsWith(full) && verdict.passed && verdict.coversDefault === wanted);
+		const covers = key(gate?.tiers?.[tier], COVERS_DEFAULT);
+		const covering = Object.entries(trees).find(([slot, verdict]) => slot.startsWith(full) && verdict.passed && verdict.coversDefault === covers);
 		if (covering !== undefined) return covering[1];
 	}
 	return own;

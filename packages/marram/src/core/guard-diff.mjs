@@ -9,6 +9,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkoutAt, scratchFolder } from "./checkout.mjs";
+import { groups } from "./gate.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { removedCitations } from "./map-diff.mjs";
 import { isTestFile, testsIn } from "./test-inventory.mjs";
@@ -125,7 +126,16 @@ function testChanges(repo, ancestor, before) {
 	for (let i = 0; i < changes.length; i++) {
 		const status = changes[i][0];
 		const [from, to] = status === "R" || status === "C" ? [changes[++i], changes[++i]] : [changes[++i], changes[i]];
-		if (status === "A" || status === "C" || !isTestFile(from)) continue;
+		// A new test file adds tests, which is no loss, but one it runs alone stops the others in the run (Mocha's whole run).
+		if (status === "A" || status === "C") {
+			if (isTestFile(to)) for (const found of testsIn(to, read(repo, to)) ?? []) if (found.only) lines.push(`now only: ${to} › ${found.name} (in a new file)`);
+			continue;
+		}
+		// Renamed into a test file's name: new to the runner, so as for a new file, a test it runs alone stops the others.
+		if (!isTestFile(from)) {
+			if (isTestFile(to)) for (const found of testsIn(to, read(repo, to)) ?? []) if (found.only) lines.push(`now only: ${to} › ${found.name} (newly named as a test file)`);
+			continue;
+		}
 		const was = testsIn(from, read(before, from));
 		// A helper beside the tests (test/helpers.mjs, tests/conftest.py) declares none: moving or removing it is no change.
 		if (status === "D") {
@@ -177,6 +187,10 @@ function compareProject(before, now, project) {
 		// Stages run in order, so the order of those on both sides is a change of its own.
 		const [kept, keptNow] = [[...old.keys()].filter((key) => current.has(key)), [...current.keys()].filter((key) => old.has(key))];
 		if (kept.join("\0\0") !== keptNow.join("\0\0")) lines.push(`${tier}: order now ${keptNow.map((key) => current.get(key).name).join(", ")} (was ${kept.map((key) => old.get(key).name).join(", ")})`);
+		// And a stage run alongside another (`concurrent`) no longer waits for it: the stages kept on both sides that run
+		// together, by group.
+		const [together, togetherNow] = [togetherIn(was.tiers[tier], current), togetherIn(is.tiers[tier], old)];
+		if (together !== togetherNow) lines.push(`${tier}: run together now ${togetherNow} (was ${together})`);
 	}
 	if (was.prePush !== is.prePush) lines.push(`prePush: ${was.prePush} → ${is.prePush}`);
 	// The inherited variables whose values decide whether a pass still counts: one no longer named stops doing so.
@@ -228,6 +242,13 @@ function probeChanges(before, now, project, wasFaults, isFaults) {
 /** What a stage runs: its arguments and its environment. */
 const runs = ({ run, env = {} }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
 
+/** The groups of `stages` (as the gate runs them) with two or more stages whose keys `other` has too, by name: "none" if none. */
+function togetherIn(stages, other) {
+	const keys = new Map([...occurrences(stages)].map(([key, stage]) => [stage, key]));
+	const shared = groups(stages).map((group) => group.filter((stage) => other.has(keys.get(stage)))).filter((group) => group.length > 1);
+	return shared.map((group) => group.map((stage) => stage.name).join(", ")).join("; ") || "none";
+}
+
 /** A tier's stages by name and occurrence (the second stage named "test" is "test" 2), in order. */
 function occurrences(stages) {
 	const seen = new Map();
@@ -247,7 +268,7 @@ const answer = (value) => writeSync(3, JSON.stringify(value));
 try {
 	const config = (await import(process.argv[1])).default ?? {};
 	const gate = config.gate ?? {};
-	const stages = (tier) => (Array.isArray(gate.tiers?.[tier]) ? gate.tiers[tier] : []).map(({ name, run, env }) => ({ name: String(name), run: Array.isArray(run) ? run.map(String) : [], env }));
+	const stages = (tier) => (Array.isArray(gate.tiers?.[tier]) ? gate.tiers[tier] : []).map(({ name, run, env, concurrent }) => ({ name: String(name), run: Array.isArray(run) ? run.map(String) : [], env, concurrent: concurrent === true }));
 	// A RegExp as its source, a string quoted, so the two can't compare equal.
 	const faults = (Array.isArray(config.probes?.faults) ? config.probes.faults : []).map((fault) => ({
 		name: String(fault?.name), patch: fault?.patch, cwd: fault?.cwd, run: fault?.run,

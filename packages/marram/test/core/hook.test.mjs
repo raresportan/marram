@@ -127,6 +127,10 @@ test("a full pass counts for the default gate only when it ran the default stage
 		"a different stage": { default: [stage("t", { code: 1 })], full: [stage("b")] },
 		"the same stage with another environment": { default: [stage("d", { env: { MODE: "strict" } })], full: [stage("d"), stage("f")] },
 		"the default stages in another order": { default: [stage("d"), stage("f")], full: [stage("f"), stage("d")] },
+		// Run together, e's test could read d's build from before: the default gate runs e after d.
+		"the default stages run together": { default: [stage("d"), stage("e")], full: [{ ...stage("d"), concurrent: true }, { ...stage("e"), concurrent: true }] },
+		// Marked the same in both, but a stage between them in full splits their group: run apart there, together by default.
+		"the default's group split in the full gate": { default: [{ ...stage("d"), concurrent: true }, { ...stage("e"), concurrent: true }], full: [{ ...stage("d"), concurrent: true }, stage("x"), { ...stage("e"), concurrent: true }] },
 	};
 	for (const [difference, tiers] of Object.entries(unlike)) {
 		const repo = project({ tiers: { fast: [], ...tiers } });
@@ -148,6 +152,28 @@ test("a full pass counts for the default gate only when it ran the default stage
 		assert.equal(repo.gate("full").status, 0);
 		assert.equal(repo.finish().status, 0);
 		assert.equal(repo.runs(), "dxe", "a full gate with extra stages between the default ones still answers for it");
+	} finally {
+		repo.remove();
+	}
+});
+
+test("a full pass recorded before coverage compared groups (0.3.0) no longer answers for the default gate", () => {
+	const repo = project();
+	try {
+		repo.commit("one");
+		assert.equal(repo.gate().status, 0);
+		const statePath = join(repo.root, ".git", "marram-gate.json");
+		const before = JSON.parse(readFileSync(statePath, "utf8"));
+		const [defaultSlot, defaultPass] = Object.entries(before.trees).find(([, verdict]) => verdict.tier === "default");
+		assert.equal(repo.gate("full").status, 0);
+		// As 0.3.0 recorded it: the full pass covering the default with the default stages' own key, and no default pass.
+		const state = JSON.parse(readFileSync(statePath, "utf8"));
+		delete state.trees[defaultSlot];
+		for (const verdict of Object.values(state.trees)) if (verdict.tier === "full") verdict.coversDefault = defaultPass.stages;
+		writeFileSync(statePath, JSON.stringify(state));
+		const runs = repo.runs();
+		assert.equal(repo.finish().status, 0);
+		assert.equal(repo.runs(), runs + "d", "finish runs the default gate rather than reuse the old full pass");
 	} finally {
 		repo.remove();
 	}

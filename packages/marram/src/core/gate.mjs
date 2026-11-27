@@ -13,10 +13,10 @@ import { spawn } from "node:child_process";
 import { createWriteStream, rmSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
+import { COVERS_DEFAULT, projectTreeKey, stageKeys, stageText, treeOf, updateState, verdictKey } from "./gate-state.mjs";
 import { spawnable } from "./command.mjs";
 import { failureExcerpt } from "./failure-excerpt.mjs";
-import { jsonOption, printJson } from "./json-output.mjs";
+import { exitWhenWritten, jsonOption, printJson } from "./json-output.mjs";
 
 const TIERS = ["fast", "default", "full"];
 // A run's folder: its tier, when it started, and its gate's process id, so two gates starting in the same millisecond
@@ -98,16 +98,27 @@ export async function startRun(logs, tier, date = new Date()) {
 }
 
 /**
- * Whether the full tier runs each default stage, in order, with the same command, arguments and environment; other
- * stages may come between them. Tiers are the project's, so a full gate needn't contain the default one, and its pass
- * then says nothing about the default gate.
+ * Whether the full tier runs each default stage, in order, with the same command, arguments and environment, and runs
+ * together exactly the default stages the default tier runs together; other stages may come between them. A stage
+ * between two marked ones in full splits their group, so they run apart there and together by default, where one may
+ * break the other. Tiers are the project's, so a full gate needn't contain the default one, and its pass then says
+ * nothing about the default gate.
  */
-function ranDefault(tiers) {
-	if (!Array.isArray(tiers.default)) return false;
+export function ranDefault(tiers) {
+	if (!Array.isArray(tiers.default) || !Array.isArray(tiers.full)) return false;
 	const wanted = tiers.default.map(stageText);
 	let found = 0;
-	for (const stage of tiers.full.map(stageText)) if (stage === wanted[found]) found++;
-	return found === wanted.length;
+	// The full tier's groups, each narrowed to the default stages in it, by their place in the default tier.
+	const ran = [];
+	for (const group of groups(tiers.full)) {
+		const mine = [];
+		for (const stage of group) if (found < wanted.length && stageText(stage) === wanted[found]) mine.push(found++);
+		if (mine.length > 0) ran.push(mine);
+	}
+	if (found !== wanted.length) return false;
+	let next = 0;
+	const expected = groups(tiers.default).map((group) => group.map(() => next++));
+	return JSON.stringify(ran) === JSON.stringify(expected);
 }
 
 /**
@@ -204,7 +215,7 @@ export async function gate(root, config, given) {
 		if (project === undefined) return;
 		const key = stageKeys(root, config.gate, { create: true });
 		const stages = key(tiers[tier]);
-		const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: key(tiers.default) } : {};
+		const covers = tier === "full" && passed && ranDefault(tiers) ? { coversDefault: key(tiers.default, COVERS_DEFAULT) } : {};
 		updateState(root, (state) => { state.trees[verdictKey(project, tier, stages)] = { passed, tier, stages, at: Date.now(), ...extra, ...covers }; });
 	};
 
@@ -220,16 +231,18 @@ export async function gate(root, config, given) {
 	}
 
 	const began = Date.now();
-	/** With --json, the run's report and how it ended, as the command's result. */
-	const result = (ended) => json && printJson({ ...report, logs: dir, ...ended });
+	/** With --json, the run's report and how it ended, as the command's result: written whole before the gate exits. */
+	const result = async (ended) => {
+		if (json) await printJson({ ...report, logs: dir, ...ended });
+	};
 	say(`Gate (${tier}). Logs: ${dir}`);
 	for (const group of groups(tiers[tier])) {
 		// A group's stages all run to the end, so each has its log, and the gate fails at the first of them that failed.
 		const results = await Promise.all(group.map(settle));
 		if (interrupted) {
 			say(`\nGate interrupted at ${group.map((stage) => stage.name).join(", ")}.`);
-			result({ interrupted: true });
-			process.exit(1);
+			await result({ interrupted: true });
+			await exitWhenWritten(1);
 		}
 		const failed = group.find((_, i) => !results[i]);
 		if (failed !== undefined) {
@@ -238,8 +251,8 @@ export async function gate(root, config, given) {
 			say(`\nGate failed at ${failed.name}.`);
 			const excerpt = failureExcerpt(log);
 			if (excerpt) say(excerpt);
-			result({ failedAt: failed.name, log, excerpt });
-			process.exit(1);
+			await result({ failedAt: failed.name, log, excerpt });
+			await exitWhenWritten(1);
 		}
 	}
 	report.passed = true;
@@ -248,5 +261,5 @@ export async function gate(root, config, given) {
 	// A file changed while the gate ran: what passed isn't what's there now, so the pass isn't recorded.
 	if (tree !== undefined && treeOf(root) === tree) verdict(true);
 	say(`\nGate passed (${Math.round((Date.now() - began) / 1000)}s).`);
-	result({ seconds: Math.round((Date.now() - began) / 1000) });
+	await result({ seconds: Math.round((Date.now() - began) / 1000) });
 }

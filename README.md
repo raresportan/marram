@@ -123,7 +123,7 @@ exec node "$(git rev-parse --show-toplevel)/node_modules/@raresportan/marram/bin
 ```
 
 A push needs the default gate unless `gate.prePush` is `"full"`, for a project with no CI behind the push. A full pass
-counts for the default gate too when it ran each default stage, in order, with the same command, arguments and `env`;
+counts for the default gate too when it ran each default stage, in order, with the same command, arguments, `env` and `concurrent`;
 other stages may come between them. A default run afterwards doesn't replace it. A full tier that runs something else,
 such as `npm run gate:full` where the default runs `npm run gate`, doesn't answer for the default gate, which then runs.
 

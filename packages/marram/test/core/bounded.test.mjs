@@ -65,3 +65,25 @@ test("an interrupted supervisor kills what the command left running, so its call
 		rmSync(folder, { recursive: true, force: true });
 	}
 });
+
+test("a command that exits leaving a process that holds its output still has its timeout: what it left is stopped, and it timed out", POSIX, () => {
+	// The wrapper exits at once; what it started keeps stdout open for two seconds, past the timeout.
+	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], { stdio: "inherit" }).unref();';
+	const started = Date.now();
+	const result = runBounded(process.execPath, ["-e", wrapper], { timeout: 600, capture: true });
+	assert.equal(result.error?.code, "ETIMEDOUT", JSON.stringify(result));
+	assert.ok(Date.now() - started < 1_800, `took ${Date.now() - started} ms`);
+	// One that leaves nothing behind still reports at once.
+	const quick = Date.now();
+	assert.equal(runBounded(process.execPath, ["-e", "process.exit(0)"], { timeout: 10_000 }).status, 0);
+	assert.ok(Date.now() - quick < 3_000);
+});
+
+test("a process the command starts in a group of its own, holding its output, doesn't hold the caller past the timeout", () => {
+	// Detached, so it's in no group the supervisor can signal; it keeps stdout open for two seconds.
+	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], { stdio: "inherit", detached: true }).unref();';
+	const started = Date.now();
+	const result = runBounded(process.execPath, ["-e", wrapper], { timeout: 500, capture: true });
+	assert.equal(result.error?.code, "ETIMEDOUT", JSON.stringify(result));
+	assert.ok(Date.now() - started < 1_800, `took ${Date.now() - started} ms`);
+});

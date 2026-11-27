@@ -76,7 +76,7 @@ export function probe(root, config, given) {
 			const started = Date.now();
 			let verdict;
 			try {
-				verdict = judge(root, copy, project, fault, timeoutMs, join(scratch, "observations.jsonl"));
+				verdict = judge(root, copy, project, fault, timeoutMs, join(scratch, "observations.jsonl"), () => snapshot.restore());
 			} finally {
 				// The next fault runs in the copy as setup left it, whatever this one's checks wrote or rewrote.
 				snapshot.restore();
@@ -141,7 +141,7 @@ function choose(faults, names) {
  * `{ state, detail }`: caught, missed or inconclusive. The files the patch touched are put back, times included, before
  * this returns; the caller restores the rest of the copy.
  */
-function judge(root, copy, project, fault, timeoutMs, observations) {
+function judge(root, copy, project, fault, timeoutMs, observations, reset) {
 	const cwd = join(project, fault.cwd ?? ".");
 	const check = () => {
 		if (fault.test) {
@@ -158,6 +158,9 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
 	};
 	const clean = check();
 	if (clean.state !== "passed") return { state: "inconclusive", detail: `the check fails without the fault: ${clean.detail}` };
+	// The patched run starts where the clean one did: what the clean run wrote (an output file, a cache) would otherwise
+	// be there, and a check that fails on it would have its failure put down to the patch.
+	reset();
 	const patch = resolve(root, fault.patch);
 	// Each file's times too, put back with the file: a build tool that compares them would otherwise take the next
 	// fault's copy for one whose sources changed since it was built.
@@ -183,12 +186,29 @@ function judge(root, copy, project, fault, timeoutMs, observations) {
  * The copy as it is now (after setup) recorded in an index of its own in `scratch`, ignored files included, so build
  * output counts; `linked` paths (from the repository's root) aside, since they're the working tree's, shared. Its
  * `restore` puts the copy back: each file that differs from the record is checked out again, and what's new is removed.
+ * Git records files, not folders, so the folders are recorded too: an empty one setup made (a build folder) is kept, or
+ * made again.
  */
 function snapshotOf(copy, scratch, linked) {
 	const env = { ...process.env, GIT_INDEX_FILE: join(scratch, "snapshot.index") };
 	const run = (...args) => execFileSync("git", args, { cwd: copy, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 });
 	const paths = ["--", ".", ...linked.map((path) => `:(exclude,top)${path}`)];
 	run("add", "-A", "-f", ...paths);
+	/** Every folder in the copy, from its root, not into .git, a linked path or a link. */
+	const foldersNow = () => {
+		const found = [];
+		const walk = (folder) => {
+			for (const entry of readdirSync(join(copy, folder), { withFileTypes: true })) {
+				const path = folder === "" ? entry.name : `${folder}/${entry.name}`;
+				if (!entry.isDirectory() || path === ".git" || linked.includes(path)) continue;
+				found.push(path);
+				walk(path);
+			}
+		};
+		walk("");
+		return found;
+	};
+	const folders = new Set(foldersNow());
 	return {
 		restore() {
 			// Changed or deleted since the record: checked out from it again. The record's file stats are refreshed first,
@@ -196,8 +216,10 @@ function snapshotOf(copy, scratch, linked) {
 			spawnSync("git", ["update-index", "-q", "--refresh"], { cwd: copy, env, stdio: "ignore" });
 			const changed = run("diff-files", "--name-only", "-z", ...paths).split("\0").filter(Boolean);
 			for (let i = 0; i < changed.length; i += 500) run("checkout-index", "-f", "-q", "--", ...changed.slice(i, i + 500));
-			// New since: removed, a new folder whole.
-			for (const path of run("ls-files", "--others", "--directory", "-z", ...paths).split("\0").filter(Boolean)) rmSync(join(copy, path), { recursive: true, force: true });
+			// New files since: removed. Then new folders, whole, and the recorded ones a check removed, made again.
+			for (const path of run("ls-files", "--others", "-z", ...paths).split("\0").filter(Boolean)) rmSync(join(copy, path), { force: true });
+			for (const folder of foldersNow()) if (!folders.has(folder)) rmSync(join(copy, folder), { recursive: true, force: true });
+			for (const folder of folders) mkdirSync(join(copy, folder), { recursive: true });
 		},
 	};
 }
