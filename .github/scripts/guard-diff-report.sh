@@ -7,10 +7,14 @@ set -euo pipefail
 
 MARKER="<!-- marram guard-diff -->"
 mode=$1
-output=$(cat "$2")
+# The output comes from the pull request's code, so it's text: cut to fit a comment, and fenced with more backticks than
+# any run of them in it, so it can't end the block and post markdown (or mentions) of its own.
+output=$(head -c 60000 "$2")
+longest=$({ grep -o '`\+' <<< "$output" || true; } | awk '{ if (length > n) n = length } END { print n + 0 }')
+fence=$(printf '%*s' $((longest < 3 ? 4 : longest + 1)) '' | tr ' ' '`')
 
 body() {
-	printf '%s\n### Guard changes\n\nWhat this pull request changes in the checks that judge it (`marram guard-diff`):\n\n````text\n%s\n````\n' "$MARKER" "$output"
+	printf '%s\n### Guard changes\n\nWhat this pull request changes in the checks that judge it (`marram guard-diff`):\n\n%stext\n%s\n%s\n' "$MARKER" "$fence" "$output" "$fence"
 }
 
 case $mode in
@@ -18,7 +22,7 @@ summary)
 	body
 	;;
 comment)
-	existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n 1)
+	existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARKER\"))) | .id" | head -n 1)
 	if [[ -n $existing ]]; then
 		gh api --method PATCH "repos/$REPO/issues/comments/$existing" -f body="$(body)" > /dev/null
 	elif [[ $output != "No guard changes"* ]]; then

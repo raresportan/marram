@@ -297,7 +297,8 @@ changed in its guards since the merge base:
 - the `package.json` scripts a stage runs, including through `-w` and, for npm, the `pre` and `post` scripts around
   them. Each is found in its own revision and matched by the stage that runs it, so a workspace renamed under an
   unchanged command, or a script changed along with the stage's arguments, shows what now runs;
-- the files in `core.hooksPath`, tracked or not;
+- the files in `core.hooksPath`, and in each `--hooks <folder>` given, tracked or not. A fresh checkout, as in CI, has
+  no `core.hooksPath`, so CI names the folder. Hooks outside the repository are listed as not compared;
 - probes: faults removed or added, a field of one changed, or its patch's contents, and the `setup`, `link` and
   `timeoutMs` that prepare their copy;
 - tests in the test files the branch changed: tests removed, newly skipped, newly run alone (`.only`), or making fewer
@@ -427,9 +428,13 @@ CI (`.github/workflows/gate.yml`) runs `npm run gate:full` on every pull request
 replay setup names that's installed as a `.cmd` or `.bat` script, such as `npm`, runs through `cmd.exe`, since Node
 won't start one directly. For a pull request it also runs `marram guard-diff` against the
 base branch and shows the result in the run's summary and in one comment on the pull request, edited on each push and
-posted only once the branch changes a guard. A pull request from a fork can't be commented on, so it gets the summary
-only. A project using Marram can do the same: run its full gate where its UI checks can open a window, and report
-guard-diff to the reviewer.
+posted only once the branch changes a guard. guard-diff runs the pull request's code, so its job has a read-only token.
+The comment comes from a second workflow, `guard-report.yml`, which runs from the default branch's definition when the
+gate finishes. It posts the first job's output as text, for pull requests from forks too, and never runs the pull
+request's code. A guard-diff that fails fails its job, and the comment says it failed.
+
+A project using Marram can do the same: run its full gate where its UI checks can open a window, and report guard-diff
+to the reviewer.
 
 ## License
 

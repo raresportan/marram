@@ -215,6 +215,34 @@ test("a project whose path git would quote is compared, and an untracked hook is
 	}
 });
 
+test("hooks are compared where a fresh checkout has none configured (--hooks), and where core.hooksPath is absolute", () => {
+	const repo = repository();
+	const git = (...args) => execFileSync("git", args, { cwd: repo.root, encoding: "utf8" }).trim();
+	try {
+		// As in CI: a fresh checkout, so no core.hooksPath; the branch deletes the whole folder.
+		git("config", "--unset", "core.hooksPath");
+		rmSync(join(repo.root, ".githooks"), { recursive: true });
+		assert.doesNotMatch(repo.diff().stdout, /Hooks/, "nothing names the hooks");
+		assert.match(repo.diff("--hooks", ".githooks").stdout, /^Hooks \(\.githooks\)\n {2}deleted pre-push$/m);
+
+		repo.write(".githooks/pre-push", "exec true\n");
+		git("config", "core.hooksPath", join(repo.root, ".githooks"));
+		const absolute = repo.diff("--hooks", ".githooks");
+		assert.match(absolute.stdout, /^Hooks \(\.githooks\)\n {2}changed pre-push$/m);
+		assert.equal(absolute.stdout.match(/^Hooks/gm).length, 1, "the same folder, named twice, is compared once");
+
+		const elsewhere = mkdtempSync(join(tmpdir(), "marram-hooks-"));
+		try {
+			git("config", "core.hooksPath", elsewhere);
+			assert.match(repo.diff().stdout, /^Hooks \(.*marram-hooks-.*\)\n {2}outside the repository, so not compared/m);
+		} finally {
+			rmSync(elsewhere, { recursive: true, force: true });
+		}
+	} finally {
+		repo.remove();
+	}
+});
+
 test("a stage's workspace is found in each revision, so swapped package names show the script that now runs", () => {
 	const repo = repository();
 	try {
