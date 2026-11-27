@@ -2,6 +2,32 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
+## 0.3.1 — 2026-11-27
+
+### Fixed
+
+- **Gate and hooks**
+  - A full gate that runs stages together no longer answers for a default gate that runs them in order. Running a test
+    alongside the build it reads could pass on an old build, and the hooks reused that pass. `concurrent` is now part of
+    a stage's key; an unmarked stage's key is unchanged, so existing passes still count.
+  - `marram init` no longer writes its pre-push into a hooks folder outside the repository (a global
+    `core.hooksPath`), where every other repository would run it. It says what to do instead.
+- **Probes and replay**
+  - A probe's patched run starts from the copy as setup left it. Before, a check that failed on the clean run's own
+    leftovers was reported as catching the fault.
+  - A command that exits but leaves a process holding its output keeps its timeout. Before, a replay setup or probe
+    check could run past `timeoutMs` and still report success.
+  - `marram replay` with `--expect` but no `-- <command>` prints the usage, rather than looking for a test named
+    `--expect`.
+- **guard-diff**
+  - Reports a test run alone (`.only`) in a test file the branch adds.
+  - Reports stages that start or stop running together (`concurrent`).
+- **`--json`**: the whole document is written before the command exits. Before, a slow reader could get it cut off at
+  64 KB.
+- **Feature maps**: runtime evidence matches a citation pattern with the `g` or `y` flag on every citation, as the static
+  check already did.
+- **Ratchets**: an import-boundary entry whose file was deleted says it's gone.
+
 ## 0.3.0 — 2026-11-27
 
 ### Added
