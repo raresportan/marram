@@ -5,7 +5,9 @@
 // So the command runs under a supervisor (this file, run as a script), in a process group of its own. At the timeout
 // the supervisor sends the group SIGTERM, so the command can stop what it started, and after GRACE_MS SIGKILL; on
 // Windows, taskkill ends the command's whole tree. An interruption (Ctrl-C, a hook's timeout) is passed on to the
-// group, which no longer gets the terminal's own. The supervisor says how the command ended on file descriptor 3.
+// group, which no longer gets the terminal's own. A command that exits leaving processes in its group (holding its
+// output) is done when they are, and the timeout covers them too. The supervisor says how the command ended on file
+// descriptor 3.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 
@@ -79,13 +81,32 @@ function supervise({ file, args, timeout, options }) {
 		report({ error: { code: error.code, message: error.message } });
 		process.exit(0);
 	});
+	/** Whether anything is left in the command's process group. */
+	const groupAlive = () => {
+		try {
+			process.kill(-child.pid, 0);
+			return true;
+		} catch (error) {
+			return error.code === "EPERM";
+		}
+	};
 	child.on("exit", (status, signal) => {
-		clearTimeout(timer);
+		const finish = () => {
+			clearTimeout(timer);
+			report({ status, signal, timedOut });
+			process.exit(0);
+		};
 		// What the command started and left running, after a timeout or an interruption, would keep its output open and
 		// the caller waiting.
 		if (timedOut || interrupted) stop("SIGKILL");
-		report({ status, signal, timedOut });
-		process.exit(0);
+		if (WINDOWS || timedOut || interrupted || !groupAlive()) return finish();
+		// The command exited, but what it started is still in its group, holding the output the caller waits on: the
+		// deadline still stands, and the command is done when they are (or stopped with them when it passes).
+		const poll = setInterval(() => {
+			if (groupAlive()) return;
+			clearInterval(poll);
+			finish();
+		}, 50);
 	});
 }
 
