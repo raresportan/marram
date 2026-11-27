@@ -28,6 +28,47 @@ import { pathToFileURL } from "node:url";
 
 const FILE = "marram.config.mjs";
 
+/** Entries sorted by name, so the same variables in another order are the same. */
+const byName = (object = {}) => Object.entries(object).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+/**
+ * Every field of a stage, and what a verdict's key (gate-state.mjs) holds of it: `key` gives its part, or says why the
+ * field isn't in it. A field that changes what the stage does, left out of the key, lets a pass be reused for stages it
+ * never ran. The config check refuses a field not listed here; guard-diff compares each one, and reports a field it has
+ * no comparison of its own for as changed. config.test.mjs changes each field and checks the key and guard-diff.
+ */
+export const STAGE_FIELDS = {
+	name: { key: "it names the stage and its log: what runs is the rest" },
+	run: { key: (run) => [run] },
+	env: { key: (env) => [byName(env)] },
+	// Nothing when unmarked, so a stage's key stays what it was before stages could run together.
+	concurrent: { key: (concurrent) => (concurrent === true ? ["concurrent"] : []) },
+};
+
+/**
+ * The rest of what Marram reads, by section, and whether guard-diff reports a change to a field: true, or why not. The
+ * config check refuses a field not listed; guard-diff reports one it finds anyway as changed, without its value.
+ * config.test.mjs changes each field and checks what guard-diff says.
+ */
+export const FIELDS = {
+	config: { gate: true, probes: true, replay: true, review: true },
+	gate: {
+		logs: "it says where the logs go",
+		keep: "it says how many runs' logs are kept",
+		progress: "it picks the lines a stage shows as it runs",
+		sleepGapMs: true,
+		env: true,
+		tiers: true,
+		prePush: true,
+	},
+	probes: { setup: true, link: true, timeoutMs: true, faults: true },
+	fault: { name: true, patch: true, run: true, expect: true, test: true, cwd: true },
+	test: { file: true, name: true, assertion: true },
+	replay: { setup: true, timeoutMs: true },
+	review: { classes: true, rungs: true, subjects: true },
+};
+const fields = (section) => Object.keys(FIELDS[section]);
+
 /** The project root: the nearest folder from `from` up that has a marram.config.mjs, or undefined when none does. */
 export function findRoot(from = process.cwd()) {
 	for (let dir = resolve(from); ; dir = dirname(dir)) {
@@ -106,7 +147,7 @@ function unknownKeys(object, path, known) {
 function stageProblems(stage, label) {
 	if (!isObject(stage)) return [`${label} must be a stage: { name, run: [command, …args], env?, concurrent? }`];
 	return [
-		...unknownKeys(stage, label, ["name", "run", "env", "concurrent"]),
+		...unknownKeys(stage, label, Object.keys(STAGE_FIELDS)),
 		...(stage.concurrent !== undefined && typeof stage.concurrent !== "boolean" ? [`${label}.concurrent must be true or false`] : []),
 		...(!isText(stage.name) || /[\\/]/.test(stage.name) ? [`${label}.name must be a name, without / or \\: its log is <name>.log`] : []),
 		...(!isCommand(stage.run) ? [`${label}.run must be a command and its arguments, as in ["npm", "test"]`] : []),
@@ -118,7 +159,7 @@ function stageProblems(stage, label) {
 /** What's wrong with `gate`. */
 function gateProblems(gate) {
 	if (!isObject(gate)) return ["gate must be an object: { logs, tiers, … }"];
-	const found = unknownKeys(gate, "gate", ["logs", "keep", "progress", "sleepGapMs", "env", "tiers", "prePush"]);
+	const found = unknownKeys(gate, "gate", fields("gate"));
 	if (gate.env !== undefined && !(Array.isArray(gate.env) && gate.env.every(isText))) found.push('gate.env must be a list of environment variable names, as in ["CI", "NODE_ENV"]');
 	if (gate.logs !== undefined && !isText(gate.logs)) found.push("gate.logs must be a folder in the project");
 	if (gate.keep !== undefined && !(isPositive(gate.keep) && (Number.isInteger(gate.keep) || gate.keep === Infinity))) found.push("gate.keep must be how many runs to keep logs for: a whole number above 0, or Infinity");
@@ -145,7 +186,7 @@ function gateProblems(gate) {
 /** What's wrong with `probes`, apart from what the working tree has to hold, which probe checks when it runs. */
 export function probesProblems(probes) {
 	if (!isObject(probes)) return ["probes must be an object: { faults, … }"];
-	const found = unknownKeys(probes, "probes", ["setup", "link", "timeoutMs", "faults"]);
+	const found = unknownKeys(probes, "probes", fields("probes"));
 	if (probes.setup !== undefined && !isCommand(probes.setup)) found.push('probes.setup must be a command and its arguments, as in ["npm", "ci"]');
 	if (probes.link !== undefined && !(Array.isArray(probes.link) && probes.link.every(isText))) found.push("probes.link must be a list of paths");
 	if (probes.timeoutMs !== undefined && !isMs(probes.timeoutMs)) found.push("probes.timeoutMs must be a positive number of milliseconds");
@@ -154,14 +195,14 @@ export function probesProblems(probes) {
 	faults.forEach((fault, i) => {
 		const label = `probes.faults[${i}]${typeof fault?.name === "string" ? ` ("${fault.name}")` : ""}`;
 		if (!isObject(fault)) return found.push(`${label} must be a fault: { name, patch, run and expect, or test }`);
-		found.push(...unknownKeys(fault, `probes.faults[${i}]`, ["name", "patch", "run", "expect", "test", "cwd"]));
+		found.push(...unknownKeys(fault, `probes.faults[${i}]`, fields("fault")));
 		if (!isText(fault.name)) found.push(`${label} needs a name`);
 		if (!isText(fault.patch)) found.push(`${label} needs a patch`);
 		// One way or the other, with nothing of the other way: probe takes the test whenever there is one.
 		const byCommand = isCommand(fault.run) && (fault.expect instanceof RegExp || isText(fault.expect)) && fault.test === undefined;
 		const byTest = ["file", "name", "assertion"].every((key) => isText(fault.test?.[key])) && fault.run === undefined && fault.expect === undefined;
 		if (!byCommand && !byTest) found.push(`${label} needs either run and expect, or test: { file, name, assertion }`);
-		if (isObject(fault.test)) found.push(...unknownKeys(fault.test, `probes.faults[${i}].test`, ["file", "name", "assertion"]));
+		if (isObject(fault.test)) found.push(...unknownKeys(fault.test, `probes.faults[${i}].test`, fields("test")));
 		if (fault.cwd !== undefined && !isText(fault.cwd)) found.push(`${label}: cwd must be a path in the project`);
 		if (isText(fault.name) && faults.findIndex((other) => other?.name === fault.name) !== i) found.push(`${label}: another fault has that name`);
 	});
@@ -172,7 +213,7 @@ export function probesProblems(probes) {
 export function replayProblems(replay) {
 	if (!isObject(replay)) return ["replay must be an object: { setup, timeoutMs }"];
 	return [
-		...unknownKeys(replay, "replay", ["setup", "timeoutMs"]),
+		...unknownKeys(replay, "replay", fields("replay")),
 		...(replay.setup !== undefined && !isCommand(replay.setup) ? ['replay.setup in marram.config.mjs must be a command and its arguments, as in ["npm", "ci"]'] : []),
 		...(replay.timeoutMs !== undefined && !isMs(replay.timeoutMs) ? ["replay.timeoutMs in marram.config.mjs must be a positive number of milliseconds"] : []),
 	];
@@ -182,7 +223,7 @@ export function replayProblems(replay) {
 function reviewProblems(review) {
 	if (!isObject(review)) return ["review must be an object: { classes, rungs, subjects }"];
 	return [
-		...unknownKeys(review, "review", ["classes", "rungs", "subjects"]),
+		...unknownKeys(review, "review", fields("review")),
 		...(!isText(review.classes) ? ["review.classes must be the path of the mistake-classes doc"] : []),
 		...(review.rungs !== undefined && !(Array.isArray(review.rungs) && review.rungs.length > 0 && review.rungs.every(isText)) ? ["review.rungs must be a list of rung names"] : []),
 		...(review.subjects !== undefined && !(review.subjects instanceof RegExp) ? ["review.subjects must be a RegExp, the subjects of review-fix commits"] : []),
@@ -193,7 +234,7 @@ function reviewProblems(review) {
 export function problems(config) {
 	if (!isObject(config)) return [`its default export must be an object: { gate, probes, replay, review }`];
 	return [
-		...unknownKeys(config, "", ["gate", "probes", "replay", "review"]),
+		...unknownKeys(config, "", fields("config")),
 		...(config.gate === undefined ? [] : gateProblems(config.gate)),
 		...(config.probes === undefined ? [] : probesProblems(config.probes)),
 		...(config.replay === undefined ? [] : replayProblems(config.replay)),

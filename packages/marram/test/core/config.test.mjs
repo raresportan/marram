@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { problems } from "../../src/core/config.mjs";
+import { FIELDS, problems, STAGE_FIELDS } from "../../src/core/config.mjs";
+import { stageText } from "../../src/core/gate-state.mjs";
 
 const BIN = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
 const REPO = resolve(import.meta.dirname, "../../../..");
@@ -99,4 +100,25 @@ test("every command refuses a config with problems, and lists them all before it
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("a verdict's key changes with each stage field STAGE_FIELDS keys, and with no other", () => {
+	// Two values of each field: a field added to STAGE_FIELDS without them fails here, so its place in the key is decided.
+	const samples = { name: ["unit", "units"], run: [["npm", "test"], ["npm", "run", "check"]], env: [{ A: "1" }, { A: "2" }], concurrent: [false, true] };
+	assert.deepEqual(Object.keys(samples), Object.keys(STAGE_FIELDS));
+	const base = Object.fromEntries(Object.entries(samples).map(([field, [value]]) => [field, value]));
+	for (const [field, [, other]] of Object.entries(samples)) {
+		const keyed = typeof STAGE_FIELDS[field].key === "function";
+		assert.equal(stageText({ ...base, [field]: other }) !== stageText(base), keyed, `${field} ${keyed ? "is" : "isn't"} in the key`);
+		if (!keyed) assert.ok(STAGE_FIELDS[field].key.length > 0, `${field} says why it isn't in the key`);
+	}
+	// A stage's key is what it was before the fields were listed, so verdicts recorded then still count.
+	assert.equal(stageText({ name: "x", run: ["npm", "test"], env: { B: "1", A: "2" } }), '[["npm","test"],[["A","2"],["B","1"]]]');
+	assert.equal(stageText({ name: "x", run: ["npm", "test"], concurrent: true }), '[["npm","test"],[],"concurrent"]');
+});
+
+test("the config check refuses a field FIELDS doesn't list, in each section", () => {
+	const config = { gate: { tiers: { fast: [{ ...stage("unit"), unheardOf: 1 }] }, unheardOf: 1 }, probes: { faults: [{ name: "f", patch: "p", test: { file: "f", name: "n", assertion: "a", unheardOf: 1 }, unheardOf: 1 }], unheardOf: 1 }, replay: { unheardOf: 1 }, review: { classes: "c", unheardOf: 1 }, unheardOf: 1 };
+	const found = problems(config).filter((problem) => problem.includes("unheardOf isn't something Marram reads"));
+	assert.equal(found.length, Object.keys(FIELDS).length + 1, found.join("\n"));
 });

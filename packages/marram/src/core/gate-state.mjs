@@ -5,6 +5,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { STAGE_FIELDS } from "./config.mjs";
 
 // A failure is reused this long, then the gate runs again: a flaky check gets another chance without a code change.
 const FAILURE_TTL_MS = 15 * 60 * 1000;
@@ -101,12 +102,11 @@ export function updateState(cwd, change) {
 }
 
 /**
- * One stage as the gate runs it: its command and arguments, its environment in a fixed order, and whether it runs
- * together with the marked stages next to it. That last one counts: a full gate that runs a test alongside the build it
- * reads passes on a build from before, so it can't answer for a default gate that runs them one after the other. Left
- * out when unmarked, so a stage's key stays what it was.
+ * One stage as the gate runs it: the part of each field STAGE_FIELDS keys (config.mjs), in its order. Whether a stage
+ * runs together with the marked stages next to it counts: a full gate that runs a test alongside the build it reads
+ * passes on a build from before, so it can't answer for a default gate that runs them one after the other.
  */
-export const stageText = ({ run, env = {}, concurrent }) => JSON.stringify([run, Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)), ...(concurrent === true ? ["concurrent"] : [])]);
+export const stageText = (stage) => JSON.stringify(Object.entries(STAGE_FIELDS).flatMap(([field, { key }]) => (typeof key === "function" ? key(stage[field]) : [])));
 
 // The secret that stage keys are made with, in its own file beside the state and readable only by its owner: the state
 // holds keys, and with the secret beside them a reader could check guesses at a stage's low-entropy values.
