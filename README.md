@@ -330,7 +330,8 @@ anything under a `test`, `tests`, `__tests__` or `spec` folder, `test_*.py`, `*_
 read in JavaScript and TypeScript (node:test, Jest, Vitest and Mocha: `describe`, `suite`, `context`, `test`, `it` and
 `specify`, skipped with `.skip`, `.todo`, an `x` prefix or `{ skip }`, run alone with `.only`, an `f` prefix or
 `{ only }`; a call on another object, such as `pattern.test("…")`, isn't a test unless it's on the enclosing test's
-context, as node:test's subtests are), Python (pytest and unittest: `def test_…`, in
+context, as node:test's subtests are; a parameterized `test.each(…)("…")` or Vitest `test.for(…)("…")` is one test,
+named by its template; JSX in the file is skipped over), Python (pytest and unittest: `def test_…`, in
 classes too, skipped with a `skip`, `skipif` or `xfail` decorator) and Go (`func TestX(t *testing.T)`, skipped with
 `t.Skip`). An assertion is a call to `assert…` or `expect(…)`, `self.assert…` or `pytest.raises(…)`, or `t.Error…`,
 `t.Fatal…`, `assert.…` and `require.…`. A skip or an assertion made as a test runs or in a helper it calls isn't seen,
