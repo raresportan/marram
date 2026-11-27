@@ -245,3 +245,51 @@ test("a base that fails the assertion and also something else (a teardown) is in
 		repo.remove();
 	}
 });
+
+test("replay judges a test run by any runner's command: it fails on the base with the expected output, and passes on HEAD", () => {
+	const repo = repository();
+	const { NODE_TEST_CONTEXT, ...env } = process.env;
+	const marram = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
+	const replay = (...args) => spawnSync(process.execPath, [marram, "replay", ...args], { cwd: repo.root, env, encoding: "utf8" });
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), "export default {}");
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 0");
+		const base = repo.commit();
+		writeFileSync(join(repo.root, "value.cjs"), "module.exports = 1");
+		// A runner of its own: what Vitest, pytest or go test would be.
+		writeFileSync(join(repo.root, "check.cjs"), 'const value = require("./value.cjs");\nif (value !== 1) { console.log(`stored value: expected 1, got ${value}`); process.exit(1); }\nconsole.log("1 passed");');
+		repo.commit();
+		const redGreen = replay(base, "check.cjs", "--expect", "stored value", "--", process.execPath, "check.cjs");
+		assert.equal(redGreen.status, 0, redGreen.stdout + redGreen.stderr);
+		const report = JSON.parse(redGreen.stdout);
+		assert.deepEqual([report.base.state, report.candidate.state, report.expect], ["failed as expected", "passed", "stored value"]);
+		assert.match(report.base.detail, /expected 1, got 0/);
+		// Unchanged behavior: the base passes too, so nothing is proven.
+		const same = replay("HEAD", "check.cjs", "--expect", "stored value", "--", process.execPath, "check.cjs");
+		assert.equal(same.status, 1);
+		assert.equal(JSON.parse(same.stdout).base.state, "passed");
+		// A failure without the expected text isn't this defect's.
+		const other = replay(base, "check.cjs", "--expect", "balance unchanged", "--", process.execPath, "check.cjs");
+		assert.equal(other.status, 1);
+		assert.match(JSON.parse(other.stdout).base.detail, /doesn't contain "balance unchanged"/);
+	} finally {
+		repo.remove();
+	}
+});
+
+test("replay's command form needs --expect and a command", () => {
+	const repo = repository();
+	const { NODE_TEST_CONTEXT, ...env } = process.env;
+	const marram = fileURLToPath(new URL("../../bin/marram.mjs", import.meta.url));
+	try {
+		writeFileSync(join(repo.root, "marram.config.mjs"), "export default {}");
+		repo.commit();
+		for (const args of [["HEAD", "check.cjs", "--", "node", "check.cjs"], ["HEAD", "check.cjs", "--expect", "x", "--"], ["HEAD", "--expect", "x", "--", "node"]]) {
+			const result = spawnSync(process.execPath, [marram, "replay", ...args], { cwd: repo.root, env, encoding: "utf8" });
+			assert.equal(result.status, 1, args.join(" "));
+			assert.match(result.stderr, /--expect "<output text>" -- <command>/, args.join(" "));
+		}
+	} finally {
+		repo.remove();
+	}
+});

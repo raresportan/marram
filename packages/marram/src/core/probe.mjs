@@ -26,6 +26,7 @@ import { checkoutTree, repoPath, scratchFolder } from "./checkout.mjs";
 import { probesProblems } from "./config.mjs";
 import { runBounded } from "./bounded.mjs";
 import { spawnable } from "./command.mjs";
+import { outputExcerpt as excerpt } from "./failure-excerpt.mjs";
 import { treeOf } from "./gate-state.mjs";
 import { runNamedTest } from "./node-test.mjs";
 
@@ -237,7 +238,3 @@ function command(cwd, [program, ...args], timeout) {
 	const result = runBounded(run.file, run.args, { ...run.options, cwd, timeout, capture: true });
 	return { status: result.status, error: result.error, output: result.stdout + result.stderr };
 }
-
-/** The last lines of `output` worth showing: not blank, not a stack frame, not npm's report that its command failed. */
-const NOISE = /^\s*$|^\s+at |^Node\.js v|^npm (error|ERR!)/;
-const excerpt = (output) => output.split("\n").filter((line) => !NOISE.test(line)).slice(-3).map((line) => line.trim()).join(" ⏎ ") || "(no output)";

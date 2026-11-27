@@ -351,6 +351,17 @@ file into two temporary Git clones and runs the named test against each revision
 commit IDs and observations. Success requires the named assertion failure on the base, with nothing else in the run failing (a teardown hook, say), and a pass on HEAD.
 Skipped tests, setup errors, other failures, and checks that pass on both revisions cannot demonstrate a fix.
 
+For a test in any other runner (Vitest, Jest, pytest, go test), give the command that runs it after `--`, and text
+the failure's output must contain:
+
+```bash
+marram replay main test/store.test.ts --expect "stored value" -- npx vitest run test/store.test.ts -t "reads one"
+```
+
+The test file is copied from HEAD into both checkouts as before, and the command runs from the project folder in each.
+Success requires the command to fail on the base with the expected text in its output, and to exit 0 on HEAD. Have the
+command run only the one test: replay can't tell another test's failure from this one's.
+
 If the project needs dependencies or a build, configure a setup command such as `replay: { setup: ["npm", "ci"] }`; it can also run a project script, as in `["node", "scripts/setup.mjs"]`.
 Setup runs independently in each checkout. The selected test file should exercise behavior available on both revisions.
 The setup and the test each get five minutes on each side; set `replay: { timeoutMs }` to change that. One that runs
