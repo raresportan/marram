@@ -107,7 +107,12 @@ test("a TypeScript project compiles against the package's declarations, and runs
 			`export { restrict, runRules };`,
 			`export const wrong: string = source.statements;`,
 		];
-		writeFileSync(join(root, "index.ts"), lines.join("\n"));
+		// On 7.0, a checker from \`typescript/unstable/async\` answers with promises, which readOnce can't read: passing one
+		// must not compile (\`@ts-expect-error\` fails the compile if it does).
+		const typed = seven
+			? [...lines.slice(0, -1), `import type { Checker as Later } from "typescript/unstable/async";`, `declare const later: Later;`, `// @ts-expect-error`, `readOnce(journey, later);`, lines.at(-1)]
+			: lines;
+		writeFileSync(join(root, "index.ts"), typed.join("\n"));
 		// The same, run: readOnce with the consumer's checker, and a rule whose finder reads the file's name.
 		writeFileSync(join(root, "run.mjs"), [
 			...lines.slice(0, -2).filter((line) => !line.startsWith("export const found")).map((line) => line.replace(/^export const (\w+): [\w[\]]+ =/, "const $1 =")),
@@ -117,7 +122,7 @@ test("a TypeScript project compiles against the package's declarations, and runs
 		const tsc = spawnSync(process.execPath, [join(modules, "typescript", "bin", "tsc"), "-p", root], { cwd: root, encoding: "utf8" });
 		const errors = tsc.stdout.split("\n").filter((line) => /error TS/.test(line));
 		assert.equal(errors.length, 1, tsc.stdout + tsc.stderr);
-		assert.match(errors[0], new RegExp(`index\\.ts\\(${lines.length},14\\): error TS2322`));
+		assert.match(errors[0], new RegExp(`index\\.ts\\(${typed.length},14\\): error TS2322`));
 		// A project that only imports the lints compiles with the default lib: their declarations don't pull in 7's API
 		// declarations, which need \`lib: esnext\` (the consumer above names them itself, for its checker).
 		writeFileSync(join(root, "lints.ts"), lines.filter((line) => !checked.includes(line) && !/^if \(journey|readOnce|^export const wrong/.test(line)).join("\n"));

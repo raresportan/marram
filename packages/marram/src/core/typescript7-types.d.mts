@@ -6,8 +6,16 @@
 import type { Node } from "typescript/unstable/ast";
 export type { Node, SourceFile } from "typescript/unstable/ast";
 
-/** A checker readOnce can ask: a 7.0 project's `checker`. */
+/** What a checker answers at once: a type or a symbol, with its flags, not a promise of one. */
+interface Answer {
+	readonly flags: number;
+}
+
+/**
+ * A checker readOnce can ask: a 7.0 project's `checker` from `typescript/unstable/sync`. One from
+ * `typescript/unstable/async` answers with promises, which readOnce can't read, so it isn't one.
+ */
 export interface TypeChecker {
-	getTypeAtLocation(node: Node): object | undefined;
-	getSymbolAtLocation(node: Node): object | undefined;
+	getTypeAtLocation(node: Node): Answer | undefined;
+	getSymbolAtLocation(node: Node): Answer | undefined;
 }
