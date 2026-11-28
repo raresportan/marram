@@ -2,7 +2,7 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
-## Unreleased
+## 0.5.0 — 2026-11-28
 
 ### Added
 
