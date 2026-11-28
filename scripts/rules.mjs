@@ -12,7 +12,8 @@
 //     write, rename or removal is listed below with why the place is this run's alone.
 import { resolve } from "node:path";
 import ts from "typescript";
-import { finish, lineOf, runRules } from "@raresportan/marram/core/ratchet";
+import { finish, lineOf, runRules, sourceFiles } from "@raresportan/marram/core/ratchet";
+import { eventStates, programOf } from "../packages/marram/src/core/state-lint.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const list = "scripts/rules.mjs";
@@ -67,37 +68,10 @@ const FILE_CHANGES = new Set(["writeFileSync", "writeFile", "appendFileSync", "a
 const calleeName = (call) => (ts.isIdentifier(call.expression) ? call.expression.text : ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : undefined);
 const fileChanges = (source) => calls(source, (call) => FILE_CHANGES.has(calleeName(call)), (call) => `${calleeName(call)} in place`);
 
-const isFunction = (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node);
-/** A function two or more of whose `let` variables are assigned inside the functions it holds: state set by events. */
-function eventState(source) {
-	const sites = [];
-	const visit = (node) => {
-		if (isFunction(node) && node.body) {
-			const declared = new Map();
-			const collect = (inner) => {
-				if (inner !== node && isFunction(inner)) return;
-				if (ts.isVariableDeclarationList(inner) && (inner.flags & ts.NodeFlags.Let) !== 0) for (const { name } of inner.declarations) if (ts.isIdentifier(name)) declared.set(name.text, name);
-				ts.forEachChild(inner, collect);
-			};
-			ts.forEachChild(node.body, collect);
-			const setters = new Map([...declared.keys()].map((name) => [name, new Set()]));
-			// Plain assignment only, of a value that doesn't read the variable: `+=`, or `queue = queue.then(…)`, gathers (output,
-			// a count, writes in turn) rather than saying what state it's in.
-			const mentions = (inner, name) => (ts.isIdentifier(inner) && inner.text === name) || (ts.forEachChild(inner, (child) => mentions(child, name) || undefined) ?? false);
-			const assigns = (inner, callback) => {
-				const sets = ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(inner.left) && setters.has(inner.left.text);
-				if (callback !== undefined && sets && !mentions(inner.right, inner.left.text)) setters.get(inner.left.text).add(callback);
-				ts.forEachChild(inner, (child) => assigns(child, callback ?? (isFunction(child) ? child : undefined)));
-			};
-			ts.forEachChild(node.body, (child) => assigns(child, isFunction(child) ? child : undefined));
-			const set = [...setters].filter(([, callbacks]) => callbacks.size > 0).map(([name]) => name);
-			if (set.length >= 2) sites.push({ line: lineOf(source, declared.get(set[0])), what: `${set.join(", ")} are set by callbacks` });
-		}
-		ts.forEachChild(node, visit);
-	};
-	visit(source);
-	return sites;
-}
+// Each name resolved to what it declares, through one program over both folders.
+const program = programOf(["packages/marram/src", "packages/marram/bin"].flatMap((folder) => sourceFiles(resolve(root, folder), match)));
+const checker = program.getTypeChecker();
+const eventState = (source, { file, files }) => eventStates(program.getSourceFile(files.get(file)), checker);
 
 const rules = [
 	{ find: exits, owners: ["core/json-output.mjs"], allowed: {}, fix: "await exitWhenWritten (json-output.mjs), which exits once the output is written", stale: "no longer calls process.exit" },
