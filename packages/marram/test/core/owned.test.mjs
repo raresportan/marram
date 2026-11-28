@@ -123,3 +123,53 @@ test("a lock whose holder is gone is taken at once, and one whose holder still w
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("two processes recovering the same dead holder's lock: one paused after judging it dead doesn't take the other's", async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
+	let children = [];
+	try {
+		const lock = join(root, "state.lock");
+		mkdirSync(lock);
+		// As 0.3 and withLock before tokens wrote it: the holder's process id alone.
+		writeFileSync(join(lock, "running"), String(deadPid()));
+		const order = join(root, "order");
+		const flag = (name) => join(root, name);
+		/** A process that takes the lock, pausing until `go` exists if `pauseAfterJudging`, and holding it until `release` does. */
+		const contender = (name, { pauseAfterJudging = false, holdUntil } = {}) => spawn(process.execPath, ["--input-type=module", "-e", `
+			import { appendFileSync, existsSync } from "node:fs";
+			import { withLock } from ${JSON.stringify(OWNED)};
+			const wait = (path) => { while (!existsSync(path)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); };
+			withLock(${JSON.stringify(lock)}, () => {
+				appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(`${name}-in `)});
+				${holdUntil ? `wait(${JSON.stringify(flag(holdUntil))});` : ""}
+				appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(`${name}-out `)});
+			}, { judged: ${pauseAfterJudging ? `() => { appendFileSync(${JSON.stringify(flag("judged"))}, ""); wait(${JSON.stringify(flag("go"))}); }` : "undefined"} });
+		`], { stdio: "inherit" });
+		const exited = (child) => new Promise((resolve) => (child.exitCode !== null ? resolve(child.exitCode) : child.on("exit", resolve)));
+		children = [];
+		const appears = async (path) => {
+			for (const until = Date.now() + 20_000; !existsSync(path); ) {
+				if (Date.now() > until) assert.fail(`${path} never appeared`);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+		};
+		// The first judges the holder dead and pauses there; the second recovers the lock and holds it.
+		const first = contender("first", { pauseAfterJudging: true });
+		children.push(first);
+		await appears(flag("judged"));
+		const second = contender("second", { holdUntil: "release" });
+		children.push(second);
+		await appears(order);
+		// The first goes on while the second holds the lock: it must wait, not take it.
+		writeFileSync(flag("go"), "");
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		assert.equal(readFileSync(order, "utf8"), "second-in ", "the first didn't enter while the second held the lock");
+		writeFileSync(flag("release"), "");
+		assert.deepEqual([await exited(second), await exited(first)], [0, 0]);
+		assert.equal(readFileSync(order, "utf8"), "second-in second-out first-in first-out ");
+	} finally {
+		// A failure leaves the contenders waiting for a flag: they go with the test.
+		for (const child of children) child.kill("SIGKILL");
+		rmSync(root, { recursive: true, force: true });
+	}
+});

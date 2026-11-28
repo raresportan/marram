@@ -7,7 +7,7 @@
 //     one, so a reader sees the old file or the new one, never half of one;
 //   - what's removed is what this process made, or a folder whose maker is gone (removeIfDone, removeAbandoned);
 //   - a lock names its holder, so it's taken from a holder that's gone, never from one that's still working (withLock).
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
@@ -124,27 +124,91 @@ export function writeWhole(path, data, options = {}) {
 	}
 }
 
+/** A lock's marker: its holder's process id and a token of this taking, or the id alone as 0.3 wrote it. */
+function lockHolder(path) {
+	let text;
+	try {
+		text = readFileSync(path, "utf8");
+	} catch (error) {
+		return error.code === "ENOENT" ? undefined : null;
+	}
+	const pid = Number(text.trim().split(" ")[0]);
+	return { pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, text };
+}
+
+/**
+ * Takes the lock `path` from a holder that's gone, if its marker still reads `seen`. The marker is renamed aside first,
+ * which only one process can do: then it's read. If it's still the gone holder's, the folder, now empty, is removed,
+ * and whoever makes it next holds the lock. If another process took the lock meanwhile (this one paused after judging
+ * the holder gone), the marker is that live holder's: it's put back, and nothing else was touched.
+ */
+function takeOver(path, seen) {
+	const marker = join(path, MARKER);
+	const aside = `${path}.taken-${process.pid}-${randomBytes(4).toString("hex")}`;
+	try {
+		renameSync(marker, aside);
+	} catch {
+		// Moved or removed by another process first, or the lock is gone: look again.
+		return;
+	}
+	if (readFileSync(aside, "utf8") === seen) {
+		rmSync(aside, { force: true });
+		try {
+			rmdirSync(path);
+		} catch {
+			// Not empty, or gone: someone else's now.
+		}
+		return;
+	}
+	try {
+		renameSync(aside, marker);
+	} catch {
+		// The live holder let go meanwhile and its folder went with it.
+		rmSync(aside, { force: true });
+	}
+}
+
 /**
  * Runs `action` holding the lock `path` (a folder: making one either succeeds or finds it there), and returns what it
- * returns. The lock names this process: one whose holder is gone is taken over at once. One not marked yet is taken
- * after `staleMs`, the time between making a folder and writing a file in it being far less.
+ * returns. The lock's marker names this process and a token of this taking, and is written only if no marker is there.
+ * A lock whose holder is gone is taken over at once (takeOver), by its marker, never by removing the folder whatever is
+ * in it, so a process that judged a holder gone and paused can't take a lock another process has taken since. One not
+ * marked is taken after `staleMs`, the time between making a folder and writing a file in it being far less, and
+ * only while it's empty. `judged` runs once a holder is judged gone, before it's taken over, for a test to pause there.
  */
-export function withLock(path, action, { staleMs = 10_000 } = {}) {
+export function withLock(path, action, { staleMs = 10_000, judged = () => {} } = {}) {
+	const mine = `${process.pid} ${randomBytes(8).toString("hex")}`;
 	for (;;) {
 		try {
 			mkdirSync(path);
+			// Only if there's no marker: a folder made, removed and made again by another process meanwhile is theirs.
+			writeFileSync(join(path, MARKER), mine, { flag: "wx" });
 			break;
 		} catch (error) {
-			if (error.code !== "EEXIST") throw error;
-			const pid = holder(join(path, MARKER));
+			if (error.code !== "EEXIST" && error.code !== "ENOENT") throw error;
+		}
+		const found = lockHolder(join(path, MARKER));
+		if (found === null) {
+			// A marker that can't be read: whether its holder is gone isn't known.
+			pause(10);
+		} else if (found === undefined) {
 			const age = Date.now() - (statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-			const gone = pid !== null && (pid === undefined ? age > staleMs : !alive(pid));
-			if (gone) rmSync(path, { recursive: true, force: true });
-			else pause(10);
+			if (age <= staleMs) pause(10);
+			else {
+				try {
+					rmdirSync(path);
+				} catch {
+					// Marked or removed meanwhile.
+				}
+			}
+		} else if (found.pid !== undefined && alive(found.pid)) {
+			pause(10);
+		} else {
+			judged();
+			takeOver(path, found.text);
 		}
 	}
 	try {
-		writeFileSync(join(path, MARKER), String(process.pid));
 		return action();
 	} finally {
 		rmSync(path, { recursive: true, force: true });
