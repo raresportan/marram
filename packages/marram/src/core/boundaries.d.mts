@@ -1,4 +1,4 @@
-import type { SourceFile } from "typescript";
+import type { SourceFile } from "#typescript-types";
 import type { Allowed, Rule, Site } from "./ratchet.mjs";
 /** A layer: the layers its files may import from, and whether they may import Node's modules. */
 export interface Layer {

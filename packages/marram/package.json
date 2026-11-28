@@ -36,6 +36,9 @@
     "./electron/ipc": { "types": "./src/electron/ipc.d.ts", "default": "./src/electron/ipc.js" },
     "./electron/session": { "types": "./src/electron/session.d.ts", "default": "./src/electron/session.js" }
   },
+  "imports": {
+    "#typescript-types": { "types@>=7.0": "./src/core/typescript7-types.d.mts", "types": "./src/core/typescript-types.d.mts" }
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "prepack": "npm run build",
