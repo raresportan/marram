@@ -118,6 +118,12 @@ test("a TypeScript project compiles against the package's declarations, and runs
 		const errors = tsc.stdout.split("\n").filter((line) => /error TS/.test(line));
 		assert.equal(errors.length, 1, tsc.stdout + tsc.stderr);
 		assert.match(errors[0], new RegExp(`index\\.ts\\(${lines.length},14\\): error TS2322`));
+		// A project that only imports the lints compiles with the default lib: their declarations don't pull in 7's API
+		// declarations, which need \`lib: esnext\` (the consumer above names them itself, for its checker).
+		writeFileSync(join(root, "lints.ts"), lines.filter((line) => !checked.includes(line) && !/^if \(journey|readOnce|^export const wrong/.test(line)).join("\n"));
+		writeFileSync(join(root, "lints.json"), JSON.stringify({ compilerOptions: { module: "nodenext", strict: true, noEmit: true, skipLibCheck: false, types: [] }, files: ["lints.ts"] }));
+		const lints = spawnSync(process.execPath, [join(modules, "typescript", "bin", "tsc"), "-p", join(root, "lints.json")], { cwd: root, encoding: "utf8" });
+		assert.equal(lints.status, 0, lints.stdout + lints.stderr);
 		const run = spawnSync(process.execPath, ["run.mjs"], { cwd: root, encoding: "utf8" });
 		assert.equal(run.status, 0, run.stderr);
 		assert.deepEqual(JSON.parse(run.stdout), {
