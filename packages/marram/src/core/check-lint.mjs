@@ -10,7 +10,7 @@
 // takes instead.
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
-import ts from "typescript";
+import ts from "./typescript.mjs";
 import { matches } from "./pattern.mjs";
 import { lineOf, parse } from "./ratchet.mjs";
 

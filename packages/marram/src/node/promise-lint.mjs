@@ -7,7 +7,7 @@
 // There is no exception list: a site that floats is fixed. Promises kept in a variable and dropped aren't seen; a
 // process-wide `unhandledRejection` handler (`hearRejections` in ./background.ts) logs those.
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import ts from "typescript";
+import ts from "../core/typescript.mjs";
 import { lineOf } from "../core/ratchet.mjs";
 
 export const FIX = "await it, return it, .catch it, or hand it to background(label, work) from @raresportan/marram/node/background";

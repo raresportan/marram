@@ -8,7 +8,7 @@
 // setter called inside a function the effect hands on (a subscription's listener, a timer, a request's `.then`) is what
 // effects are for, and is fine. Some effects rightly set state from outside React (the DOM measured, the clock): a
 // project lists those with why, using `ratchet` from @raresportan/marram/core/ratchet.
-import ts from "typescript";
+import ts from "../core/typescript.mjs";
 import { lineOf } from "../core/ratchet.mjs";
 
 const EFFECTS = new Set(["useEffect", "useLayoutEffect"]);

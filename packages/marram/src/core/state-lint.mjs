@@ -2,7 +2,7 @@
 // `state`): a function whose callbacks assign two or more of its `let` variables keeps one, and it belongs in a table
 // (machine.mjs). Names are resolved to what they declare, through TypeScript's checker: a callback's parameter named
 // like the outer variable is another variable, and `event.ready` is a property, not the outer `ready`.
-import ts from "typescript";
+import ts from "./typescript.mjs";
 
 /**
  * A program over `paths` for resolving names within each file: JavaScript included, no lib and no module resolution,

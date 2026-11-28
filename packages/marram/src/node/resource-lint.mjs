@@ -3,7 +3,7 @@
 // (`restrict` from @raresportan/marram/core/ratchet, with `acquisitions` as its finder), so a resource is never acquired in passing
 // and freed, or not, by hand. Pair it with a `Scope` (./scope.ts) per kind of owner, and a check that ending the owner
 // leaves nothing behind.
-import ts from "typescript";
+import ts from "../core/typescript.mjs";
 import { lineOf } from "../core/ratchet.mjs";
 
 /** What each module exports that starts something lasting. Sync calls that finish before returning aren't here. */

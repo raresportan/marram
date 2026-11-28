@@ -1,7 +1,7 @@
 // A comment explaining a workaround reads as permission to work around: agents copy it, and it spreads. So a project can
 // ban comments, as a finder for `restrict`. What stays is what no code can say: a doc comment on a declaration, a license
 // header at the top of a file, and a comment with a link to the outside constraint it explains.
-import ts from "typescript";
+import ts from "./typescript.mjs";
 
 const isDocComment = (text) => text.startsWith("/**");
 const hasLink = (text) => /https?:\/\//.test(text);
