@@ -2,7 +2,7 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
-## Unreleased
+## 0.4.0 — 2026-11-28
 
 ### Added
 
@@ -28,6 +28,9 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 
 ### Fixed
 
+- **TypeScript 7**: with `typescript` 7 installed (what `npm install typescript` gives now), the lints said "Cannot read
+  properties of undefined". TypeScript 7's JavaScript API isn't 5's, which they read code with, so they now say that,
+  with the command that installs TypeScript 5 beside it.
 - **Replay and probe**
   - A command whose output goes to the terminal (replay's setup, a node:test run) colours it again.
     - Since 0.3.1 its output comes through a pipe, so commands that colour only for a terminal stopped. Marram now sets
