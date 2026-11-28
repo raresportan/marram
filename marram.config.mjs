@@ -8,11 +8,13 @@ const fast = [
 	...[npm("typecheck", "run", "typecheck"), npm("unit", "test"), { name: "independent", run: ["node", "scripts/independent.mjs"] }, { name: "rules", run: ["node", "scripts/rules.mjs"] }].map(together),
 ];
 const tally = (tier) => ({ name: "tally", run: ["npm", "run", tier, "-w", "tally"] });
+// The TLA+ models (models/), checked over every interleaving: seconds, so not in the fast tier.
+const models = together({ name: "models", run: ["node", "scripts/models.mjs"] });
 
 export default {
 	gate: {
 		logs: ".verify",
-		tiers: { fast: [...fast, tally("gate:fast")], default: [...fast, tally("gate")], full: [...fast, tally("gate:full"), npm("probes", "run", "probes")] },
+		tiers: { fast: [...fast, tally("gate:fast")], default: [...fast, models, tally("gate")], full: [...fast, models, tally("gate:full"), npm("probes", "run", "probes")] },
 	},
 	// Known defects each guard was built to catch, put back one at a time in a copy of the working tree (marram probe).
 	probes: {
