@@ -2,7 +2,9 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
-## Unreleased
+## 0.5.1 — 2026-11-28
+
+0.5.0 was tagged but not published to npm: 0.5.1 is the first release with its changes, and these fixes.
 
 ### Fixed
 
