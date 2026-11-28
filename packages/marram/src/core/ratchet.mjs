@@ -9,7 +9,7 @@
 // `runRules` runs several such rules over a folder, parsing each file once.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import ts from "typescript";
+import ts from "./typescript.mjs";
 import { exitWhenWritten } from "./json-output.mjs";
 import { matches } from "./pattern.mjs";
 

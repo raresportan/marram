@@ -6,7 +6,7 @@
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { lineOf } from "./ratchet.mjs";
-import ts from "typescript";
+import ts from "./typescript.mjs";
 
 const isFunction = (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node);
 /** Awaits something itself, not in a function it defines. */

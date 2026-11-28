@@ -10,7 +10,7 @@
 // as `node:fs` or `fs`, or `electron`. Existing violations go on a ratchet list, by `file -> import`.
 import { isBuiltin } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
-import ts from "typescript";
+import ts from "./typescript.mjs";
 import { lineOf, parse, runRules } from "./ratchet.mjs";
 
 const posix = (path) => path.split(sep).join("/");
