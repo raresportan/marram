@@ -1,4 +1,4 @@
-import type { SourceFile, Node } from "typescript";
+import type { SourceFile, Node } from "#typescript-types";
 /** Where a file does the thing a ratchet restricts: its line, and what it does there. */
 export interface Site {
 	readonly line: number;

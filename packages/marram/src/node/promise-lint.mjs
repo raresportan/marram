@@ -7,7 +7,7 @@
 // There is no exception list: a site that floats is fixed. Promises kept in a variable and dropped aren't seen; a
 // process-wide `unhandledRejection` handler (`hearRejections` in ./background.ts) logs those.
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import ts from "../core/typescript.mjs";
+import ts, { release } from "../core/typescript.mjs";
 import { lineOf } from "../core/ratchet.mjs";
 
 export const FIX = "await it, return it, .catch it, or hand it to background(label, work) from @raresportan/marram/node/background";
@@ -105,14 +105,18 @@ export function lintPromises({ root, projects }) {
 	let files = 0;
 	for (const { config, folder } of projects) {
 		const program = programOf(resolve(root, config));
-		const checker = program.getTypeChecker();
-		const base = resolve(root, folder);
-		for (const source of program.getSourceFiles()) {
-			// TypeScript names files with forward slashes on every platform, so they're compared as resolved paths.
-			const inside = relative(base, resolve(source.fileName));
-			if (source.isDeclarationFile || inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue;
-			files++;
-			for (const line of floating(checker, source)) problems.push(`${relative(root, resolve(source.fileName)).split(sep).join("/")}:${line}`);
+		try {
+			const checker = program.getTypeChecker();
+			const base = resolve(root, folder);
+			for (const source of program.getSourceFiles()) {
+				// TypeScript names files with forward slashes on every platform, so they're compared as resolved paths.
+				const inside = relative(base, resolve(source.fileName));
+				if (source.isDeclarationFile || inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) continue;
+				files++;
+				for (const line of floating(checker, source)) problems.push(`${relative(root, resolve(source.fileName)).split(sep).join("/")}:${line}`);
+			}
+		} finally {
+			release(program);
 		}
 	}
 	return { files, problems };

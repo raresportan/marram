@@ -1,4 +1,4 @@
-import type { SourceFile } from "typescript";
+import type { SourceFile } from "#typescript-types";
 /** Where `until` comes from, unless a project says otherwise. */
 export declare const WAITS: "@raresportan/marram/core/until";
 /** What's wrong with one check's `source`: it can't fail, or it waits or bounds time on its own. `waits` is where `until` comes from. */

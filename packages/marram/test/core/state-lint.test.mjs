@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { release } from "../../src/core/typescript.mjs";
 import { eventStates, programOf } from "../../src/core/state-lint.mjs";
 
 /** What the lint finds in `code`, as a module of its own. */
@@ -14,7 +15,11 @@ function found(code) {
 		const file = join(root, "module.mjs");
 		writeFileSync(file, code);
 		const program = programOf([file]);
-		return eventStates(program.getSourceFile(file), program.getTypeChecker()).map(({ what }) => what);
+		try {
+			return eventStates(program.getSourceFile(file), program.getTypeChecker()).map(({ what }) => what);
+		} finally {
+			release(program);
+		}
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
