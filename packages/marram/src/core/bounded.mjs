@@ -19,7 +19,8 @@ const WINDOWS = process.platform === "win32";
 
 /**
  * Run `file` with `args` for at most `timeout` ms: `{ status, signal, error?, stdout, stderr }`, as spawnSync gives it,
- * with `error.code` "ETIMEDOUT" when it was stopped at the timeout. `capture` collects its output as text; otherwise
+ * with `error.code` "ETIMEDOUT" when it was stopped at the timeout, and "EINTR" when this process was interrupted
+ * before then. `capture` collects its output as text; otherwise
  * it goes to this process's stderr, and `terminal` says whether that's a terminal. `options` are spawn's (cwd, env,
  * windowsVerbatimArguments).
  */
@@ -51,6 +52,8 @@ export function runBounded(file, args, { timeout, capture = false, terminal = Bo
 	if (report === null) return { status: null, signal: supervisor.signal, error: supervisor.error ?? new Error("the command's supervisor didn't say how it ended"), ...output };
 	if (report.error) return { status: null, signal: null, error: Object.assign(new Error(report.error.message), { code: report.error.code }), ...output };
 	if (report.timedOut) return { status: report.status, signal: report.signal, error: Object.assign(new Error(`didn't finish within ${timeout} ms`), { code: "ETIMEDOUT" }), ...output };
+	// An interruption is the result, whatever status the command exited with as it cleaned up.
+	if (report.interrupted) return { status: report.status, signal: report.signal, error: Object.assign(new Error(`interrupted by ${report.interrupted}`), { code: "EINTR" }), ...output };
 	return { status: report.status, signal: report.signal, ...output };
 }
 
@@ -111,11 +114,14 @@ function supervise({ file, args, timeout, options }) {
 			return error.code === "EPERM";
 		}
 	};
-	// What the moves found out, for the report: how the command ended, and whether it was stopped at its timeout.
-	const found = { ended: undefined, timedOut: false };
+	// What the moves found out, for the report: how the command ended, whether it was stopped at its timeout, and the
+	// first interruption, which stands whatever the command does after it: one that cleans up and exits 0 still didn't
+	// run its course.
+	const found = { ended: undefined, timedOut: false, interrupted: undefined };
 	const timers = [];
 	const lifecycle = machine(LIFECYCLE, "running", ({ event, from, to, args: [first, second] }) => {
 		if (event === "exit") found.ended = { status: first, signal: second };
+		if (event === "interrupt" && found.interrupted === undefined && from !== "done" && from !== "failed") found.interrupted = first;
 		if (to === "halting" && from !== "halting") {
 			found.timedOut = event === "deadline";
 			stop(event === "deadline" ? "SIGTERM" : first);
@@ -134,7 +140,7 @@ function supervise({ file, args, timeout, options }) {
 			child.stdout?.destroy();
 			child.stderr?.destroy();
 		}
-		if (to === "done") report({ status: found.ended?.status ?? null, signal: found.ended?.signal ?? null, timedOut: found.timedOut });
+		if (to === "done") report({ status: found.ended?.status ?? null, signal: found.ended?.signal ?? null, timedOut: found.timedOut, interrupted: found.interrupted });
 		if (to === "failed") report({ error: { code: first.code, message: first.message } });
 		// What it forwarded is written before the supervisor goes: to a pipe, a write can finish later.
 		if (to === "done" || to === "failed") exitWhenWritten(0);

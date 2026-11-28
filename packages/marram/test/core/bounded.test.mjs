@@ -109,3 +109,38 @@ test("a command whose output goes to a terminal is told to colour it, unless the
 		rmSync(folder, { recursive: true, force: true });
 	}
 });
+
+/** A process that runs `command` under runBounded with `timeout`, and prints what it returned as JSON. */
+const caller = (command, timeout) => spawn(process.execPath, ["--input-type=module", "-e", `
+	import { runBounded } from ${JSON.stringify(BOUNDED)};
+	const r = runBounded(process.execPath, ["-e", ${JSON.stringify(command)}], { timeout: ${timeout}, capture: true });
+	console.log(JSON.stringify({ status: r.status, signal: r.signal, code: r.error?.code ?? null }));
+`], { stdio: ["ignore", "pipe", "inherit"] });
+
+const outcome = (child) => new Promise((resolve) => {
+	let out = "";
+	child.stdout.on("data", (chunk) => { out += chunk; });
+	child.on("exit", () => resolve(JSON.parse(out)));
+});
+
+const waitFor = async (path) => {
+	for (const until = Date.now() + 20_000; !existsSync(path); ) {
+		if (Date.now() > until) assert.fail(`${path} never appeared`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+};
+
+test("an interrupted command is reported interrupted, though it cleans up and exits 0 after its deadline", POSIX, async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// Writes its supervisor's pid, then on SIGTERM takes 600 ms to clean up, past the 350 ms deadline, and exits 0.
+		const supervisor = join(root, "supervisor");
+		const command = `require("node:fs").writeFileSync(${JSON.stringify(supervisor)}, String(process.ppid)); process.on("SIGTERM", () => setTimeout(() => process.exit(0), 600)); setInterval(() => {}, 1000);`;
+		const result = outcome(caller(command, 350));
+		await waitFor(supervisor);
+		process.kill(Number(readFileSync(supervisor, "utf8")), "SIGTERM");
+		assert.deepEqual(await result, { status: 0, signal: null, code: "EINTR" });
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

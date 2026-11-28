@@ -71,7 +71,8 @@ export function probe(root, config, given) {
 		if (setup !== undefined) {
 			const result = command(project, setup, timeoutMs);
 			if (result.error?.code === "ETIMEDOUT") throw new Error(`probes.setup didn't finish within ${timeoutMs} ms`);
-			if (result.status !== 0) throw new Error(`probes.setup failed: ${result.error?.message ?? excerpt(result.output)}`);
+			// An interrupted setup may exit 0 as it cleans up: it still didn't run its course.
+			if (result.error || result.status !== 0) throw new Error(`probes.setup failed: ${result.error?.message ?? excerpt(result.output)}`);
 		}
 		const snapshot = snapshotOf(copy, scratch, link.map((path) => repoPath(root, path)));
 		const verdicts = chosen.map((fault) => {

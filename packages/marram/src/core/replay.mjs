@@ -73,7 +73,8 @@ export function replay(root, config, args) {
 			const run = spawnable(setup[0], setup.slice(1), { cwd });
 			const result = runBounded(run.file, run.args, { ...run.options, cwd, timeout: timeoutMs });
 			if (result.error?.code === "ETIMEDOUT") return { state: "inconclusive", detail: `Setup didn't finish within ${timeoutMs} ms` };
-			if (result.status !== 0) return { state: "inconclusive", detail: "Setup failed" };
+			// An interrupted setup may exit 0 as it cleans up: it still didn't run its course.
+			if (result.error || result.status !== 0) return { state: "inconclusive", detail: result.error ? `Setup failed: ${result.error.message}` : "Setup failed" };
 		}
 		if (command === undefined) return runNamedTest({ cwd, file: target, name, assertion, output: join(scratch, side + ".jsonl"), timeout: timeoutMs });
 		return runCommand(cwd);
