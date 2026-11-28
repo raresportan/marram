@@ -61,10 +61,15 @@ jobs:
 
   # The lints on TypeScript 7.0, the other version the peer range takes: the gate runs them on the 5 the repository
   # installs, and 7.0 reaches them only through the adapter (packages/marram/src/core/typescript7.mjs), whose API 7.0
-  # marks unstable. A 7.0 release that changes it fails here.
+  # marks unstable. A 7.0 release that changes it fails here. On Windows too, where the compiler spells paths with
+  # forward slashes that Node spells with backslashes.
   typescript-7:
-    name: Unit tests on TypeScript 7.0
-    runs-on: ubuntu-24.04
+    name: Unit tests on TypeScript 7.0 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -77,6 +82,8 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install, with TypeScript 7.0 in place of 5
+        # bash on Windows too, which stops at a failing line where PowerShell goes on.
+        shell: bash
         run: |
           npm ci
           npm install --no-save typescript@~7.0.2

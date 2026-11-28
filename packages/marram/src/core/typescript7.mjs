@@ -18,7 +18,16 @@ const { SyntaxKind: K } = ast;
 const ModuleResolutionKind = { Classic: 1, Node10: 2, Node16: 3, NodeNext: 99, Bundler: 100, 1: "Classic", 2: "Node10", 3: "Node16", 99: "NodeNext", 100: "Bundler" };
 
 // Text given to createSourceFile and configs written for createProgram, served to the compiler in place of the disk.
-const served = new Map();
+// Kept by one spelling of each path: on Windows the compiler asks for `C:/work/a.ts` what was served as `C:\work\a.ts`,
+// and the file system takes a name in any case, so there a path is kept with forward slashes, lowercased.
+const spelled = process.platform === "win32" ? (file) => file.replaceAll("\\", "/").toLowerCase() : (file) => file;
+const texts = new Map();
+const served = {
+	get: (file) => texts.get(spelled(file)),
+	has: (file) => texts.has(spelled(file)),
+	set: (file, text) => texts.set(spelled(file), text),
+	delete: (file) => texts.delete(spelled(file)),
+};
 let api;
 let made = 0;
 

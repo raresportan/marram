@@ -2,6 +2,15 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
+## Unreleased
+
+### Fixed
+
+- **TypeScript 7.0 on Windows**: the typed lints (`lintPromises`, `lintJourneys`) couldn't open the program they build,
+  since the compiler asks for the config Marram serves it with forward slashes, and Marram kept it with backslashes.
+- **`readOnce` on TypeScript 7.0**: its type took a checker from `typescript/unstable/async`, whose promises it can't
+  read, so it reported nothing. It now takes only a synchronous checker (`typescript/unstable/sync`).
+
 ## 0.5.0 — 2026-11-28
 
 ### Added
