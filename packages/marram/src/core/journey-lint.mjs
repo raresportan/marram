@@ -6,7 +6,7 @@
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { lineOf } from "./ratchet.mjs";
-import ts, { release } from "./typescript.mjs";
+import ts, { asChecker, release } from "./typescript.mjs";
 
 const isFunction = (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node);
 /** Awaits something itself, not in a function it defines. */
@@ -16,7 +16,8 @@ const awaitsHere = (node) => ts.isAwaitExpression(node) || (!isFunction(node) &&
  * The checks in `source` (calls `<session>.check(label, ok, detail?)`) that read once, or whose polling nobody waits
  * for, with their lines.
  */
-export function readOnce(source, checker, session = "session") {
+export function readOnce(source, given, session = "session") {
+	const checker = asChecker(given);
 	const found = [];
 	const visit = (node) => {
 		if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "check" && node.expression.expression.getText(source) === session) {

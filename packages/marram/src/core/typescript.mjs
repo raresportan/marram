@@ -38,5 +38,11 @@ export default ts;
  */
 export const release = seven ? (program) => program.release() : () => {};
 
+/**
+ * The checker a lint asks as 5's: on 7, a caller's own checker (a project's `checker` from `typescript/unstable/sync`)
+ * is adapted, as the lints' programs' are; on 5, it's 5's already.
+ */
+export const asChecker = seven ? ts.asChecker : (checker) => checker;
+
 /** A node's children with the tokens between them: 5's `node.getChildren(source)`, which 7's nodes don't have. */
 export const children = seven ? ts.getChildren : (node, source) => node.getChildren(source);

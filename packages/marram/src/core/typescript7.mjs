@@ -142,6 +142,14 @@ function programOf(project, letGo) {
 	};
 }
 
+// A checker checkerOf made, told from 7's own, which a caller may pass a lint (readOnce) instead.
+const ADAPTED = Symbol("adapted");
+
+/** 5's checker for `checker`: 7's own one adapted, or one already adapted as it is. */
+function asChecker(checker) {
+	return checker?.[ADAPTED] ? checker : checkerOf(checker);
+}
+
 /** 5's checker, as far as the lints ask it: types come back with the methods 5's have. */
 function checkerOf(checker) {
 	const typeOf = (type) => type && {
@@ -154,6 +162,7 @@ function checkerOf(checker) {
 		getCallSignatures: () => checker.getSignaturesOfType(type, SignatureKind.Call),
 	};
 	return {
+		[ADAPTED]: true,
 		getSymbolAtLocation: (node) => checker.getSymbolAtLocation(node),
 		getShorthandAssignmentValueSymbol: (node) => checker.getShorthandAssignmentValueSymbol(node),
 		getExportsOfModule: (symbol) => checker.getExportsOfModule(symbol),
@@ -239,6 +248,7 @@ export default {
 	flattenDiagnosticMessageText: (message) => (typeof message === "string" ? message : message?.messageText ?? ""),
 	forEachChild: (node, visit) => node.forEachChild(visit),
 	getChildren,
+	asChecker,
 	liveSnapshots: () => live,
 	isPropertySignature: kinds(K.PropertySignature),
 	isMethodSignature: kinds(K.MethodSignature),
