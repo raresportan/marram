@@ -74,9 +74,11 @@ export const LIFECYCLE = {
 	running: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "running", grace: "running", error: "failed" },
 	// Exited, while something it started may still hold its output: the timeout still covers that.
 	exited: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "exited", grace: "exited", error: "exited" },
-	// Stopped at its timeout or on an interruption: its group was signalled, SIGKILL follows at grace, and once drained,
-	// whatever still holds its output is out of reach and the caller doesn't wait for it.
-	halting: { exit: "halting", close: "done", deadline: "halting", interrupt: "halting", drained: "done", grace: "halting", error: "failed" },
+	// Stopped at its timeout or on an interruption: its group was signalled, SIGKILL follows at grace, and only once
+	// drained is it done. Its output closing isn't enough: a worker in its group that ignored SIGTERM, with its output
+	// sent elsewhere, still has SIGKILL coming. Whatever still holds the output then is out of reach, and the caller
+	// doesn't wait for it.
+	halting: { exit: "halting", close: "halting", deadline: "halting", interrupt: "halting", drained: "done", grace: "halting", error: "failed" },
 	// Said how it ended.
 	done: { exit: "done", close: "done", deadline: "done", interrupt: "done", drained: "done", grace: "done", error: "done" },
 	// Said why it couldn't start.

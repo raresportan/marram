@@ -144,3 +144,20 @@ test("an interrupted command is reported interrupted, though it cleans up and ex
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("at its timeout, a worker in the command's group that ignores SIGTERM is killed, though the command exits and its output closes", POSIX, async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// The worker doesn't hold the output (stdio ignored), ignores SIGTERM, and would write a mark 7 s on, past the
+		// 500 ms timeout and the 5 s grace period. The wrapper exits on SIGTERM, closing the output.
+		const mark = join(root, "mark");
+		const worker = `process.on("SIGTERM", () => {}); setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(mark)}, ""), 7000);`;
+		const wrapper = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { stdio: "ignore" }); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`;
+		const started = Date.now();
+		assert.equal((await outcome(caller(wrapper, 500))).code, "ETIMEDOUT");
+		await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 8500 - Date.now())));
+		assert.equal(existsSync(mark), false, "the worker was killed before it wrote its mark");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

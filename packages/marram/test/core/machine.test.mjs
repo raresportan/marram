@@ -61,6 +61,8 @@ test("each pair a fix was for leads where that fix said", () => {
 		"exited interrupt": "halting",
 		// The command gone and its group empty, while something out of reach holds the output: the caller goes.
 		"halting drained": "done",
+		// The output closed while a worker in the group ignores SIGTERM: SIGKILL at grace still comes.
+		"halting close": "halting",
 		// A second interruption while halting doesn't start over.
 		"halting interrupt": "halting",
 		// A spawn error is followed by close: one report, the error's.
