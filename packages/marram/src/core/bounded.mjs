@@ -12,13 +12,18 @@
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import { exitWhenWritten } from "./json-output.mjs";
+import { machine } from "./machine.mjs";
 
 const GRACE_MS = 5_000;
+// How long after SIGKILL the group is asked about: a process still in it then has exited and waits only to be reaped,
+// which its parent, out of reach, may never do soon.
+const SETTLE_MS = 1_000;
 const WINDOWS = process.platform === "win32";
 
 /**
  * Run `file` with `args` for at most `timeout` ms: `{ status, signal, error?, stdout, stderr }`, as spawnSync gives it,
- * with `error.code` "ETIMEDOUT" when it was stopped at the timeout. `capture` collects its output as text; otherwise
+ * with `error.code` "ETIMEDOUT" when it was stopped at the timeout, and "EINTR" when this process was interrupted
+ * before then. `capture` collects its output as text; otherwise
  * it goes to this process's stderr, and `terminal` says whether that's a terminal. `options` are spawn's (cwd, env,
  * windowsVerbatimArguments).
  */
@@ -37,7 +42,7 @@ export function runBounded(file, args, { timeout, capture = false, terminal = Bo
 		maxBuffer: 64 * 1024 * 1024,
 		stdio: ["pipe", capture ? "pipe" : 2, capture ? "pipe" : 2, "pipe"],
 		// Only if the supervisor itself never returns.
-		timeout: timeout + GRACE_MS + 30_000,
+		timeout: timeout + GRACE_MS + SETTLE_MS + 30_000,
 		killSignal: "SIGKILL",
 	});
 	const output = { stdout: supervisor.stdout ?? "", stderr: supervisor.stderr ?? "" };
@@ -50,8 +55,44 @@ export function runBounded(file, args, { timeout, capture = false, terminal = Bo
 	if (report === null) return { status: null, signal: supervisor.signal, error: supervisor.error ?? new Error("the command's supervisor didn't say how it ended"), ...output };
 	if (report.error) return { status: null, signal: null, error: Object.assign(new Error(report.error.message), { code: report.error.code }), ...output };
 	if (report.timedOut) return { status: report.status, signal: report.signal, error: Object.assign(new Error(`didn't finish within ${timeout} ms`), { code: "ETIMEDOUT" }), ...output };
+	// An interruption is the result, whatever status the command exited with as it cleaned up.
+	if (report.interrupted) return { status: report.status, signal: report.signal, error: Object.assign(new Error(`interrupted by ${report.interrupted}`), { code: "EINTR" }), ...output };
 	return { status: report.status, signal: report.signal, ...output };
 }
+
+/**
+ * The supervisor's lifecycle: for each state, the state each event leads to.
+ *   exit       the command exited (with its status and signal)
+ *   close      the command exited, and everything that held its output let go of it
+ *   deadline   its timeout came
+ *   interrupt  the supervisor was signalled (Ctrl-C, a hook's timeout)
+ *   drained    while halting: the command is gone, and nothing it can be signalled through is left
+ *   grace      while halting: GRACE_MS passed since the first signal
+ *   settle     once killed: SETTLE_MS passed since SIGKILL
+ *   error      it couldn't be started
+ * Every event is listed in every state, so one ignored is a choice: once it has reported (done, failed), nothing more
+ * is, so a close that follows a spawn error, or a deadline that follows a close, can't report twice.
+ */
+export const LIFECYCLE = {
+	// Running, holding its output.
+	running: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "running", grace: "running", settle: "running", error: "failed" },
+	// Exited, while something it started may still hold its output: the timeout still covers that.
+	exited: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "exited", grace: "exited", settle: "exited", error: "exited" },
+	// Stopped at its timeout or on an interruption: its group was signalled with SIGTERM (or the interruption's signal),
+	// and only once drained is it done. Its output closing isn't enough: a worker in its group that ignored SIGTERM, with
+	// its output sent elsewhere, still has SIGKILL coming at grace. Whatever still holds the output once drained is out
+	// of reach, and the caller doesn't wait for it.
+	halting: { exit: "halting", close: "halting", deadline: "halting", interrupt: "halting", drained: "done", grace: "killed", settle: "halting", error: "failed" },
+	// SIGKILL sent to the group: drained once it's empty.
+	killed: { exit: "killed", close: "killed", deadline: "killed", interrupt: "killed", drained: "done", grace: "killed", settle: "settled", error: "failed" },
+	// SIGKILL has been in for SETTLE_MS: what's left in the group has exited and waits to be reaped, so it's drained as
+	// soon as the command itself has exited, the group not asked.
+	settled: { exit: "settled", close: "settled", deadline: "settled", interrupt: "settled", drained: "done", grace: "settled", settle: "settled", error: "failed" },
+	// Said how it ended.
+	done: { exit: "done", close: "done", deadline: "done", interrupt: "done", drained: "done", grace: "done", settle: "done", error: "done" },
+	// Said why it couldn't start.
+	failed: { exit: "failed", close: "failed", deadline: "failed", interrupt: "failed", drained: "failed", grace: "failed", settle: "failed", error: "failed" },
+};
 
 /** The supervisor: runs the command `spec` names, stops it at its timeout, and reports how it ended. */
 function supervise({ file, args, timeout, options }) {
@@ -84,51 +125,45 @@ function supervise({ file, args, timeout, options }) {
 			return error.code === "EPERM";
 		}
 	};
-	let timedOut = false;
-	let interrupted = false;
-	let ended;
-	let finished = false;
-	const finish = () => {
-		if (finished) return;
-		finished = true;
-		clearTimeout(timer);
-		report({ status: ended?.status ?? null, signal: ended?.signal ?? null, timedOut });
-		// What it forwarded is written before the supervisor goes: to a pipe, a write can finish later.
-		exitWhenWritten(0);
-	};
-	/** Stop the command and what it started; once it's gone and nothing it can reach is left, let go of its output. */
-	const halt = (signal) => {
-		stop(signal);
-		setTimeout(() => stop("SIGKILL"), GRACE_MS);
-		const poll = setInterval(() => {
-			if (ended === undefined || groupAlive()) return;
-			clearInterval(poll);
+	// What the moves found out, for the report: how the command ended, whether it was stopped at its timeout, and the
+	// first interruption, which stands whatever the command does after it: one that cleans up and exits 0 still didn't
+	// run its course.
+	const found = { ended: undefined, timedOut: false, interrupted: undefined };
+	const timers = [];
+	const lifecycle = machine(LIFECYCLE, "running", ({ event, from, to, args: [first, second] }) => {
+		if (event === "exit") found.ended = { status: first, signal: second };
+		if (event === "interrupt" && found.interrupted === undefined && from !== "done" && from !== "failed") found.interrupted = first;
+		if (to === "halting" && from !== "halting") {
+			found.timedOut = event === "deadline";
+			stop(event === "deadline" ? "SIGTERM" : first);
+			timers.push(setTimeout(() => lifecycle.send("grace"), GRACE_MS));
+			timers.push(setInterval(() => {
+				if (found.ended !== undefined && (lifecycle.state === "settled" || !groupAlive())) lifecycle.send("drained");
+			}, 50));
+		}
+		// A second interruption is passed on too, with no second grace period.
+		if (event === "interrupt" && (from === "halting" || from === "killed")) stop(first);
+		if (event === "grace" && to === "killed") {
+			stop("SIGKILL");
+			timers.push(setTimeout(() => lifecycle.send("settle"), SETTLE_MS));
+		}
+		if (to === from) return;
+		if (to === "done" || to === "failed") for (const timer of timers) clearTimeout(timer);
+		if (to === "done" && event === "drained") {
 			// Whatever still holds the output is out of reach (a group of its own): the caller doesn't wait for it.
 			child.stdout?.destroy();
 			child.stderr?.destroy();
-			finish();
-		}, 50);
-	};
-	const timer = setTimeout(() => {
-		timedOut = true;
-		halt("SIGTERM");
-	}, timeout);
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-		process.on(signal, () => {
-			interrupted = true;
-			halt(signal);
-		});
-	}
-	child.on("error", (error) => {
-		clearTimeout(timer);
-		report({ error: { code: error.code, message: error.message } });
-		exitWhenWritten(0);
+		}
+		if (to === "done") report({ status: found.ended?.status ?? null, signal: found.ended?.signal ?? null, timedOut: found.timedOut, interrupted: found.interrupted });
+		if (to === "failed") report({ error: { code: first.code, message: first.message } });
+		// What it forwarded is written before the supervisor goes: to a pipe, a write can finish later.
+		if (to === "done" || to === "failed") exitWhenWritten(0);
 	});
-	child.on("exit", (status, signal) => {
-		ended = { status, signal };
-	});
-	// Exited, and its output let go by everything that held it: done.
-	child.on("close", finish);
+	timers.push(setTimeout(() => lifecycle.send("deadline"), timeout));
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => lifecycle.send("interrupt", signal));
+	child.on("error", (error) => lifecycle.send("error", error));
+	child.on("exit", (status, signal) => lifecycle.send("exit", status, signal));
+	child.on("close", () => lifecycle.send("close"));
 }
 
 if (process.argv[1] === import.meta.filename && process.argv[2] === "--supervise") supervise(JSON.parse(readFileSync(0, "utf8")));

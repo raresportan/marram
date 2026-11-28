@@ -12,6 +12,16 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 - **guard-diff** reports a change to any config field it has no comparison of its own for: `gate.sleepGapMs`, `replay`'s
   and `review`'s, with their values, and a field Marram doesn't read, anywhere in the config, without its value.
 - **Ratchets**: `runRules` takes `match`, the files to read by name, so rules can run over JavaScript modules.
+- **State tables**: the supervisor that bounds replay's setup, a probe's check and a node:test run keeps its lifecycle
+  in one table (`machine.mjs`), with every event's outcome in every state, rather than in flags its callbacks set.
+  Once it has said how the command ended, nothing makes it say so again, and a second interruption is passed on
+  without starting the grace period over.
+  - An interrupted command is reported as interrupted (an error with code `EINTR`), even when it cleans up and exits 0.
+    Before, replay or a probe could take it for a pass. Replay's and the probes' setup refuse it too.
+  - After a timeout or an interruption, the supervisor waits for the command's whole process group to be gone, so a
+    worker that ignores SIGTERM still gets SIGKILL after the grace period. Before, once the command's output closed,
+    the worker was left running. A second after SIGKILL it stops asking the group, so a worker that exited but that
+    its parent hasn't reaped doesn't keep the caller waiting.
 
 ### Fixed
 

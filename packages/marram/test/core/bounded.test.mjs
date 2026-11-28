@@ -109,3 +109,84 @@ test("a command whose output goes to a terminal is told to colour it, unless the
 		rmSync(folder, { recursive: true, force: true });
 	}
 });
+
+/** A process that runs `command` under runBounded with `timeout`, and prints what it returned as JSON. */
+const caller = (command, timeout) => spawn(process.execPath, ["--input-type=module", "-e", `
+	import { runBounded } from ${JSON.stringify(BOUNDED)};
+	const r = runBounded(process.execPath, ["-e", ${JSON.stringify(command)}], { timeout: ${timeout}, capture: true });
+	console.log(JSON.stringify({ status: r.status, signal: r.signal, code: r.error?.code ?? null }));
+`], { stdio: ["ignore", "pipe", "inherit"] });
+
+const outcome = (child) => new Promise((resolve) => {
+	let out = "";
+	child.stdout.on("data", (chunk) => { out += chunk; });
+	child.on("exit", () => resolve(JSON.parse(out)));
+});
+
+const waitFor = async (path) => {
+	for (const until = Date.now() + 20_000; !existsSync(path); ) {
+		if (Date.now() > until) assert.fail(`${path} never appeared`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+};
+
+test("an interrupted command is reported interrupted, though it cleans up and exits 0 after its deadline", POSIX, async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// Writes its supervisor's pid, then on SIGTERM takes 600 ms to clean up, past the 350 ms deadline, and exits 0.
+		const supervisor = join(root, "supervisor");
+		const command = `require("node:fs").writeFileSync(${JSON.stringify(supervisor)}, String(process.ppid)); process.on("SIGTERM", () => setTimeout(() => process.exit(0), 600)); setInterval(() => {}, 1000);`;
+		const result = outcome(caller(command, 350));
+		await waitFor(supervisor);
+		process.kill(Number(readFileSync(supervisor, "utf8")), "SIGTERM");
+		assert.deepEqual(await result, { status: 0, signal: null, code: "EINTR" });
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("at its timeout, a worker in the command's group that ignores SIGTERM is killed, though the command exits and its output closes", POSIX, async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// The worker doesn't hold the output (stdio ignored), ignores SIGTERM, and would write a mark 7 s on, past the
+		// 500 ms timeout and the 5 s grace period. The wrapper exits on SIGTERM, closing the output.
+		const mark = join(root, "mark");
+		const worker = `process.on("SIGTERM", () => {}); setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(mark)}, ""), 7000);`;
+		const wrapper = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { stdio: "ignore" }); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`;
+		const started = Date.now();
+		assert.equal((await outcome(caller(wrapper, 500))).code, "ETIMEDOUT");
+		await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 8500 - Date.now())));
+		assert.equal(existsSync(mark), false, "the worker was killed before it wrote its mark");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("after SIGKILL, a worker that exited but isn't reaped yet doesn't keep the caller waiting", { skip: (process.platform === "win32" && "signals a process group") || (spawnSync("python3", ["-c", ""]).status !== 0 && "needs python3 for setpgid") }, async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// A holder leaves the command's group and forks a worker that joins it and exits at once. The holder never reaps
+		// it, so the exited worker stays in the group until the holder exits, 9 s on, and its parent then reaps it.
+		const holderPid = join(root, "holder");
+		const holder = [
+			"import os, sys, time",
+			"group = int(sys.argv[1])",
+			"os.setpgid(0, 0)",
+			`open(${JSON.stringify(holderPid)}, "w").write(str(os.getpid()))`,
+			"if os.fork() == 0:",
+			"    os.setpgid(0, group)",
+			"    os._exit(0)",
+			"time.sleep(9)",
+		].join("\n");
+		const command = `require("node:child_process").spawn("python3", ["-c", ${JSON.stringify(holder)}, String(process.pid)], { stdio: "ignore" }); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`;
+		const started = Date.now();
+		const result = await outcome(caller(command, 500));
+		const took = Date.now() - started;
+		if (existsSync(holderPid)) try { process.kill(Number(readFileSync(holderPid, "utf8")), "SIGKILL"); } catch {}
+		assert.equal(result.code, "ETIMEDOUT");
+		// The timeout, the grace period and a moment for SIGKILL to land, not however long the holder takes.
+		assert.ok(took < 8000, `took ${took} ms`);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

@@ -4,12 +4,16 @@
 //     write finishes later (on macOS). Exits go through exitWhenWritten, which waits for them.
 //   - check: a pattern a project gives may have the g or y flag, and then test() and exec() start where its last match
 //     ended. A pattern the file didn't write is matched through pattern.mjs, which starts from the text's start.
+//   - state: a lifecycle kept in variables that callbacks set is a state machine nobody wrote down, with combinations
+//     no one meant and events no one handled. A function whose callbacks assign two or more of its variables keeps
+//     one; it goes in a table (machine.mjs), where every event has an outcome in every state.
 //   - shared: a file written in place can be read half written, and a removal can take what another run is using. A
 //     file goes through owned.mjs (writeWhole), and so does a run's folder (ownFolder) and a lock; anywhere else a
 //     write, rename or removal is listed below with why the place is this run's alone.
 import { resolve } from "node:path";
 import ts from "typescript";
-import { finish, lineOf, runRules } from "@raresportan/marram/core/ratchet";
+import { finish, lineOf, runRules, sourceFiles } from "@raresportan/marram/core/ratchet";
+import { eventStates, programOf } from "../packages/marram/src/core/state-lint.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const list = "scripts/rules.mjs";
@@ -64,9 +68,15 @@ const FILE_CHANGES = new Set(["writeFileSync", "writeFile", "appendFileSync", "a
 const calleeName = (call) => (ts.isIdentifier(call.expression) ? call.expression.text : ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : undefined);
 const fileChanges = (source) => calls(source, (call) => FILE_CHANGES.has(calleeName(call)), (call) => `${calleeName(call)} in place`);
 
+// Each name resolved to what it declares, through one program over both folders.
+const program = programOf(["packages/marram/src", "packages/marram/bin"].flatMap((folder) => sourceFiles(resolve(root, folder), match)));
+const checker = program.getTypeChecker();
+const eventState = (source, { file, files }) => eventStates(program.getSourceFile(files.get(file)), checker);
+
 const rules = [
 	{ find: exits, owners: ["core/json-output.mjs"], allowed: {}, fix: "await exitWhenWritten (json-output.mjs), which exits once the output is written", stale: "no longer calls process.exit" },
 	{ find: patterns, owners: ["core/pattern.mjs"], allowed: {}, fix: "match it with matches or firstMatch (pattern.mjs), from the text's start", stale: "no longer matches a pattern it didn't write" },
+	{ find: eventState, owners: ["core/machine.mjs"], allowed: {}, fix: "keep the lifecycle in a state table (machine.mjs), where every event has an outcome in every state", stale: "no longer has state set by callbacks" },
 	{
 		find: fileChanges,
 		owners: ["core/owned.mjs"],
@@ -89,4 +99,4 @@ const problems = [
 	// bin has no listed sites: what's listed is src's.
 	...runRules({ root, folder: "packages/marram/bin", list, rules: rules.map((rule) => ({ ...rule, allowed: {} })), match }),
 ];
-await finish("rules", problems, "exits wait for the output, patterns a project gives match from the start, and files are written whole");
+await finish("rules", problems, "exits wait for the output, patterns a project gives match from the start, lifecycles are tables, and files are written whole");
