@@ -15,8 +15,12 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 - **State tables**: the supervisor that bounds replay's setup, a probe's check and a node:test run keeps its lifecycle
   in one table (`machine.mjs`), with every event's outcome in every state, rather than in flags its callbacks set.
   Once it has said how the command ended, nothing makes it say so again, and a second interruption is passed on
-  without starting the grace period over. An interrupted command is no longer also reported as timed out when its
-  timeout comes during the grace period.
+  without starting the grace period over.
+  - An interrupted command is reported as interrupted (an error with code `EINTR`), even when it cleans up and exits 0.
+    Before, replay or a probe could take it for a pass. Replay's and the probes' setup refuse it too.
+  - After a timeout or an interruption, the supervisor waits for the command's whole process group to be gone, so a
+    worker that ignores SIGTERM still gets SIGKILL after the grace period. Before, once the command's output closed,
+    the worker was left running.
 
 ### Fixed
 
