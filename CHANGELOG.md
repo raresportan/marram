@@ -7,21 +7,24 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
 ### Added
 
 - **Probes**: a fault counts as caught only if its check passes again without the patch, run from the same reset copy.
-  One that fails again is inconclusive, since its failure may not be the patch's. A caught fault's check runs three
-  times rather than two.
+  One that fails again is inconclusive, since its failure may not be the patch's.
 - **guard-diff** reports a change to any config field it has no comparison of its own for: `gate.sleepGapMs`, `replay`'s
   and `review`'s, with their values, and a field Marram doesn't read, anywhere in the config, without its value.
-- **Ratchets**: `runRules` takes `match`, the files to read by name, so rules can run over JavaScript modules.
-- **State tables**: the supervisor that bounds replay's setup, a probe's check and a node:test run keeps its lifecycle
-  in one table (`machine.mjs`), with every event's outcome in every state, rather than in flags its callbacks set.
-  Once it has said how the command ended, nothing makes it say so again, and a second interruption is passed on
-  without starting the grace period over.
-  - An interrupted command is reported as interrupted (an error with code `EINTR`), even when it cleans up and exits 0.
-    Before, replay or a probe could take it for a pass. Replay's and the probes' setup refuse it too.
-  - After a timeout or an interruption, the supervisor waits for the command's whole process group to be gone, so a
-    worker that ignores SIGTERM still gets SIGKILL after the grace period. Before, once the command's output closed,
-    the worker was left running. A second after SIGKILL it stops asking the group, so a worker that exited but that
-    its parent hasn't reaped doesn't keep the caller waiting.
+- **Ratchets**: `runRules` and `sourceFiles` take `match`, the files to read by name, so rules can run over JavaScript
+  modules.
+
+### Changed
+
+- **`finish`** (`core/ratchet`) returns a promise, and fails only once its list is written: await it. Without `await`
+  it still fails, but a promise lint flags the call.
+- **Interrupted commands**: replay's setup and test, a probe's check and setup, and a node:test run that's interrupted
+  come back as an error with code `EINTR`, so they're inconclusive, whatever the command exited with as it cleaned up.
+- **Probes**: a caught fault's check runs three times rather than two (clean, with the patch, clean again).
+- **Electron**: each session's bootstrap is `bootstrap-<session>.mjs` in `appDir` rather than `bootstrap.mjs`, and is
+  removed when the session is disposed if it isn't in the session's scratch folder.
+- **The command supervisor** (replay, probes, node:test runs) keeps its lifecycle in one table, with every event's
+  outcome in every state, rather than in flags its callbacks set. Once it has said how a command ended, nothing makes
+  it say so again, and a second interruption is passed on without starting the grace period over.
 
 ### Fixed
 
@@ -30,18 +33,24 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
     - Since 0.3.1 its output comes through a pipe, so commands that colour only for a terminal stopped. Marram now sets
       `FORCE_COLOR=1` for it when its own output is a terminal, unless the project's environment sets `FORCE_COLOR`
       or `NO_COLOR`. Output that marram captures and matches stays plain.
+  - An interrupted command that cleaned up and exited 0 could be taken for a pass. Replay's and the probes' setup,
+    which looked only at the exit status, refuse it too.
+  - After a timeout or an interruption, a worker in the command's process group that ignored SIGTERM, with its output
+    sent elsewhere, was left running once the command's output closed. The supervisor now waits for the group to be
+    gone, so the worker gets SIGKILL after the grace period. A second after SIGKILL it stops asking the group, so a
+    worker that exited but that its parent hasn't reaped doesn't keep the caller waiting.
 - **Patterns**: `gate.progress`, a probe's `expect` and the check lint's `match` work whatever their `g` or `y` flags.
   Before, `gate.progress: /step/g` showed every other matching line, and `lintChecks` read every other check file.
 - **Output**: a ratchet lint's `finish`, and every other way the commands exit, wait for what they wrote. Before, a
-  lint's list of problems longer than 64 KB reached a slow reader cut short. `finish` now returns a promise.
+  lint's list of problems longer than 64 KB reached a slow reader cut short.
 - **Shared places**
   - The gate's `report.json` and the journeys' `report.json` and `missing-citations.json` are written whole. Before, a
     reader during a run (an agent, a CI step) could read half a file.
   - A gate that died holding the state file's lock no longer keeps others waiting, and one still working holds it,
     however long. Before, the lock was taken from any holder after 10 seconds.
   - `marram init`'s pre-push hook is executable from the moment it's there. Before, a push in that moment skipped it.
-  - Each Electron session's bootstrap has a name of its own, so journeys running at once with the same `appDir` don't
-    start each other's profile. It's removed when the session is disposed.
+  - Journeys running at once with the same `appDir` could start each other's profile, through one shared
+    `bootstrap.mjs`.
 
 ## 0.3.1 — 2026-11-27
 
