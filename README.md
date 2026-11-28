@@ -235,8 +235,11 @@ const problems = restrict({
 	fix: "go through the counter's store",
 	stale: "no longer touches files",
 });
-finish("rules", problems, "files are touched only in the store");
+await finish("rules", problems, "files are touched only in the store");
 ```
+
+`finish` prints the problems and fails once they're all written, so a long list isn't cut short on its way through a
+pipe; it returns a promise, so await it.
 
 Run the script from the project root with `node scripts/rules.mjs`. An import of `node:fs/promises` outside the store
 now fails with the file, line and instruction to go through the store. `importsOf(...names)` matches literal ES imports
@@ -397,7 +400,8 @@ Setup runs independently in each checkout. The selected test file should exercis
 The setup and the test each get five minutes on each side; set `replay: { timeoutMs }` to change that. One that runs
 longer is stopped and that side is inconclusive. It and everything it started get SIGTERM, then SIGKILL five seconds
 later if they're still running, so one that ignores SIGTERM can't hang replay. On Windows its whole tree is ended at
-once. A probe's check is stopped the same way at `probes.timeoutMs`.
+once. A probe's check is stopped the same way at `probes.timeoutMs`. One interrupted (Ctrl-C, a hook's timeout) is
+inconclusive too, even if it cleans up and exits 0: it didn't run its course.
 
 ### Typed Electron IPC
 
