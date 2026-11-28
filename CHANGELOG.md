@@ -20,7 +20,8 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
     Before, replay or a probe could take it for a pass. Replay's and the probes' setup refuse it too.
   - After a timeout or an interruption, the supervisor waits for the command's whole process group to be gone, so a
     worker that ignores SIGTERM still gets SIGKILL after the grace period. Before, once the command's output closed,
-    the worker was left running.
+    the worker was left running. A second after SIGKILL it stops asking the group, so a worker that exited but that
+    its parent hasn't reaped doesn't keep the caller waiting.
 
 ### Fixed
 

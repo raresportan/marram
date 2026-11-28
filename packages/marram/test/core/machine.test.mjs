@@ -33,10 +33,11 @@ test("the supervisor's table is whole, and once it has reported, no event makes 
 });
 
 test("from every state, the supervisor's own timers end it: the timeout covers whatever the command does", () => {
-	// Only the deadline, the grace period and the drain poll, which the supervisor sends itself: whatever the command and
-	// what it started do (ignore SIGTERM, never let go of the output), these reach a report. The poll sends drained once
-	// the command has exited, which SIGKILL at grace makes it do.
-	const own = ["deadline", "grace", "drained"];
+	// Only the deadline, the grace period, the settling time and the drain poll, which the supervisor sends itself:
+	// whatever the command and what it started do (ignore SIGTERM, never let go of the output, leave an exited worker
+	// unreaped in its group), these reach a report. The poll sends drained once the command has exited, which SIGKILL at
+	// grace makes it do.
+	const own = ["deadline", "grace", "settle", "drained"];
 	for (const start of states) {
 		const seen = new Set([start]);
 		const queue = [start];
@@ -63,6 +64,11 @@ test("each pair a fix was for leads where that fix said", () => {
 		"halting drained": "done",
 		// The output closed while a worker in the group ignores SIGTERM: SIGKILL at grace still comes.
 		"halting close": "halting",
+		"halting grace": "killed",
+		"killed close": "killed",
+		// An exited worker its parent doesn't reap keeps the group there: after SIGKILL has settled, it isn't waited for.
+		"killed settle": "settled",
+		"settled drained": "done",
 		// A second interruption while halting doesn't start over.
 		"halting interrupt": "halting",
 		// A spawn error is followed by close: one report, the error's.

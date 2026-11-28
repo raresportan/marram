@@ -15,6 +15,9 @@ import { exitWhenWritten } from "./json-output.mjs";
 import { machine } from "./machine.mjs";
 
 const GRACE_MS = 5_000;
+// How long after SIGKILL the group is asked about: a process still in it then has exited and waits only to be reaped,
+// which its parent, out of reach, may never do soon.
+const SETTLE_MS = 1_000;
 const WINDOWS = process.platform === "win32";
 
 /**
@@ -39,7 +42,7 @@ export function runBounded(file, args, { timeout, capture = false, terminal = Bo
 		maxBuffer: 64 * 1024 * 1024,
 		stdio: ["pipe", capture ? "pipe" : 2, capture ? "pipe" : 2, "pipe"],
 		// Only if the supervisor itself never returns.
-		timeout: timeout + GRACE_MS + 30_000,
+		timeout: timeout + GRACE_MS + SETTLE_MS + 30_000,
 		killSignal: "SIGKILL",
 	});
 	const output = { stdout: supervisor.stdout ?? "", stderr: supervisor.stderr ?? "" };
@@ -65,24 +68,30 @@ export function runBounded(file, args, { timeout, capture = false, terminal = Bo
  *   interrupt  the supervisor was signalled (Ctrl-C, a hook's timeout)
  *   drained    while halting: the command is gone, and nothing it can be signalled through is left
  *   grace      while halting: GRACE_MS passed since the first signal
+ *   settle     once killed: SETTLE_MS passed since SIGKILL
  *   error      it couldn't be started
  * Every event is listed in every state, so one ignored is a choice: once it has reported (done, failed), nothing more
  * is, so a close that follows a spawn error, or a deadline that follows a close, can't report twice.
  */
 export const LIFECYCLE = {
 	// Running, holding its output.
-	running: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "running", grace: "running", error: "failed" },
+	running: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "running", grace: "running", settle: "running", error: "failed" },
 	// Exited, while something it started may still hold its output: the timeout still covers that.
-	exited: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "exited", grace: "exited", error: "exited" },
-	// Stopped at its timeout or on an interruption: its group was signalled, SIGKILL follows at grace, and only once
-	// drained is it done. Its output closing isn't enough: a worker in its group that ignored SIGTERM, with its output
-	// sent elsewhere, still has SIGKILL coming. Whatever still holds the output then is out of reach, and the caller
-	// doesn't wait for it.
-	halting: { exit: "halting", close: "halting", deadline: "halting", interrupt: "halting", drained: "done", grace: "halting", error: "failed" },
+	exited: { exit: "exited", close: "done", deadline: "halting", interrupt: "halting", drained: "exited", grace: "exited", settle: "exited", error: "exited" },
+	// Stopped at its timeout or on an interruption: its group was signalled with SIGTERM (or the interruption's signal),
+	// and only once drained is it done. Its output closing isn't enough: a worker in its group that ignored SIGTERM, with
+	// its output sent elsewhere, still has SIGKILL coming at grace. Whatever still holds the output once drained is out
+	// of reach, and the caller doesn't wait for it.
+	halting: { exit: "halting", close: "halting", deadline: "halting", interrupt: "halting", drained: "done", grace: "killed", settle: "halting", error: "failed" },
+	// SIGKILL sent to the group: drained once it's empty.
+	killed: { exit: "killed", close: "killed", deadline: "killed", interrupt: "killed", drained: "done", grace: "killed", settle: "settled", error: "failed" },
+	// SIGKILL has been in for SETTLE_MS: what's left in the group has exited and waits to be reaped, so it's drained as
+	// soon as the command itself has exited, the group not asked.
+	settled: { exit: "settled", close: "settled", deadline: "settled", interrupt: "settled", drained: "done", grace: "settled", settle: "settled", error: "failed" },
 	// Said how it ended.
-	done: { exit: "done", close: "done", deadline: "done", interrupt: "done", drained: "done", grace: "done", error: "done" },
+	done: { exit: "done", close: "done", deadline: "done", interrupt: "done", drained: "done", grace: "done", settle: "done", error: "done" },
 	// Said why it couldn't start.
-	failed: { exit: "failed", close: "failed", deadline: "failed", interrupt: "failed", drained: "failed", grace: "failed", error: "failed" },
+	failed: { exit: "failed", close: "failed", deadline: "failed", interrupt: "failed", drained: "failed", grace: "failed", settle: "failed", error: "failed" },
 };
 
 /** The supervisor: runs the command `spec` names, stops it at its timeout, and reports how it ended. */
@@ -129,12 +138,15 @@ function supervise({ file, args, timeout, options }) {
 			stop(event === "deadline" ? "SIGTERM" : first);
 			timers.push(setTimeout(() => lifecycle.send("grace"), GRACE_MS));
 			timers.push(setInterval(() => {
-				if (found.ended !== undefined && !groupAlive()) lifecycle.send("drained");
+				if (found.ended !== undefined && (lifecycle.state === "settled" || !groupAlive())) lifecycle.send("drained");
 			}, 50));
 		}
 		// A second interruption is passed on too, with no second grace period.
-		if (event === "interrupt" && from === "halting") stop(first);
-		if (event === "grace" && to === "halting") stop("SIGKILL");
+		if (event === "interrupt" && (from === "halting" || from === "killed")) stop(first);
+		if (event === "grace" && to === "killed") {
+			stop("SIGKILL");
+			timers.push(setTimeout(() => lifecycle.send("settle"), SETTLE_MS));
+		}
 		if (to === from) return;
 		if (to === "done" || to === "failed") for (const timer of timers) clearTimeout(timer);
 		if (to === "done" && event === "drained") {

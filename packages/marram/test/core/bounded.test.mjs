@@ -161,3 +161,32 @@ test("at its timeout, a worker in the command's group that ignores SIGTERM is ki
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("after SIGKILL, a worker that exited but isn't reaped yet doesn't keep the caller waiting", { skip: (process.platform === "win32" && "signals a process group") || (spawnSync("python3", ["-c", ""]).status !== 0 && "needs python3 for setpgid") }, async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
+	try {
+		// A holder leaves the command's group and forks a worker that joins it and exits at once. The holder never reaps
+		// it, so the exited worker stays in the group until the holder exits, 9 s on, and its parent then reaps it.
+		const holderPid = join(root, "holder");
+		const holder = [
+			"import os, sys, time",
+			"group = int(sys.argv[1])",
+			"os.setpgid(0, 0)",
+			`open(${JSON.stringify(holderPid)}, "w").write(str(os.getpid()))`,
+			"if os.fork() == 0:",
+			"    os.setpgid(0, group)",
+			"    os._exit(0)",
+			"time.sleep(9)",
+		].join("\n");
+		const command = `require("node:child_process").spawn("python3", ["-c", ${JSON.stringify(holder)}, String(process.pid)], { stdio: "ignore" }); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`;
+		const started = Date.now();
+		const result = await outcome(caller(command, 500));
+		const took = Date.now() - started;
+		if (existsSync(holderPid)) try { process.kill(Number(readFileSync(holderPid, "utf8")), "SIGKILL"); } catch {}
+		assert.equal(result.code, "ETIMEDOUT");
+		// The timeout, the grace period and a moment for SIGKILL to land, not however long the holder takes.
+		assert.ok(took < 8000, `took ${took} ms`);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
