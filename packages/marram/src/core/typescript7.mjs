@@ -42,7 +42,7 @@ const KIND_OF = { ".ts": ast.ScriptKind.TS, ".mts": ast.ScriptKind.TS, ".cts": a
 /**
  * A source file's tree, as 5's createSourceFile parses it: `text`, read as `fileName`, as `kind` (or as the kind its
  * extension says, and as TypeScript's when it says none, as 5 does). A file whose extension isn't its kind's is parsed
- * under its name with that kind's extension added: `rule.es6` as `rule.es6.js`.
+ * under its name with that kind's extension added, `rule.es6` as `rule.es6.js`, and the tree keeps the name it was given.
  *
  * The text is served only for the parse, and its snapshots are let go once the next parse has its own: a program
  * built later reads the file from the disk, as it is then, and a scan of many files holds one snapshot, not two each.
@@ -57,7 +57,10 @@ function createSourceFile(fileName, text, _target, _setParentNodes, kind) {
 	const snapshot = open({ openFiles: [file], fileChanges: { changed: [file] } });
 	settled?.dispose();
 	try {
-		return snapshot.getDefaultProjectForFile(file).program.getSourceFile(file);
+		const source = snapshot.getDefaultProjectForFile(file).program.getSourceFile(file);
+		// Named as it was given, not as it was parsed: a finder that reads `source.fileName` sees `rule.es6`.
+		if (file !== named) Object.defineProperty(source, "fileName", { value: named, enumerable: true });
+		return source;
 	} finally {
 		settled = open({ closeFiles: [file] });
 		snapshot.dispose();
@@ -139,6 +142,14 @@ function programOf(project, letGo) {
 	};
 }
 
+// A checker checkerOf made, told from 7's own, which a caller may pass a lint (readOnce) instead.
+const ADAPTED = Symbol("adapted");
+
+/** 5's checker for `checker`: 7's own one adapted, or one already adapted as it is. */
+function asChecker(checker) {
+	return checker?.[ADAPTED] ? checker : checkerOf(checker);
+}
+
 /** 5's checker, as far as the lints ask it: types come back with the methods 5's have. */
 function checkerOf(checker) {
 	const typeOf = (type) => type && {
@@ -151,6 +162,7 @@ function checkerOf(checker) {
 		getCallSignatures: () => checker.getSignaturesOfType(type, SignatureKind.Call),
 	};
 	return {
+		[ADAPTED]: true,
 		getSymbolAtLocation: (node) => checker.getSymbolAtLocation(node),
 		getShorthandAssignmentValueSymbol: (node) => checker.getShorthandAssignmentValueSymbol(node),
 		getExportsOfModule: (symbol) => checker.getExportsOfModule(symbol),
@@ -236,6 +248,7 @@ export default {
 	flattenDiagnosticMessageText: (message) => (typeof message === "string" ? message : message?.messageText ?? ""),
 	forEachChild: (node, visit) => node.forEachChild(visit),
 	getChildren,
+	asChecker,
 	liveSnapshots: () => live,
 	isPropertySignature: kinds(K.PropertySignature),
 	isMethodSignature: kinds(K.MethodSignature),

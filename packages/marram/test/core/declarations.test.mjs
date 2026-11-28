@@ -60,18 +60,37 @@ test("every .mjs entry the package exports has declarations", () => {
 	for (const entry of entries) assert.ok(existsSync(join(PKG, entry.replace(/\.mjs$/, ".d.mts"))), `${entry} has no .d.mts beside it`);
 });
 
-test("a TypeScript project compiles against the package's declarations, on the TypeScript installed (5 here, 7.0 in CI's other job)", () => {
+test("a TypeScript project compiles against the package's declarations, and runs, on the TypeScript installed (5 here, 7.0 in CI's other job)", () => {
 	const root = mkdtempSync(join(tmpdir(), "marram-consumer-"));
 	try {
 		const modules = join(root, "node_modules");
 		mkdirSync(join(modules, "@raresportan"), { recursive: true });
 		symlinkSync(PKG, join(modules, "@raresportan", "marram"), "junction");
-		symlinkSync(dirname(require.resolve("typescript/package.json")), join(modules, "typescript"), "junction");
+		const typescript = dirname(require.resolve("typescript/package.json"));
+		symlinkSync(typescript, join(modules, "typescript"), "junction");
+		const seven = JSON.parse(readFileSync(join(typescript, "package.json"), "utf8")).version.startsWith("7.");
 		writeFileSync(join(root, "package.json"), JSON.stringify({ name: "consumer", type: "module", private: true }));
-		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "nodenext", strict: true, noEmit: true, skipLibCheck: false }, files: ["index.ts"] }));
+		writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "nodenext", strict: true, noEmit: true, skipLibCheck: false, lib: ["esnext"], types: [] }, files: ["index.ts"] }));
+		// A journey with a polled check nobody awaits, which readOnce reports, given the consumer's own checker.
+		writeFileSync(join(root, "journey.ts"), `declare const session: { check(label: string, ok: () => boolean): Promise<void> };\nsession.check("ready", () => true);\n`);
+		writeFileSync(join(root, "journey.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, files: ["journey.ts"] }));
+		writeFileSync(join(root, "plugin.es6"), "// a comment\nconst x = 1;\n");
+		// The consumer's checker for the journey: 5's program's, or 7.0's project's.
+		const checked = seven
+			? [
+				`import { API } from "typescript/unstable/sync";`,
+				`const project = new API().updateSnapshot({ openProjects: ["journey.json"] }).getProject("journey.json");`,
+				`if (project === undefined) throw new Error("no project");`,
+				`const journey = project.program.getSourceFile("journey.ts"), checker = project.checker;`,
+			]
+			: [
+				`import ts from "typescript";`,
+				`const program = ts.createProgram(["journey.ts"], { strict: true, noEmit: true, types: [] });`,
+				`const journey = program.getSourceFile("journey.ts"), checker = program.getTypeChecker();`,
+			];
 		// Every declaration file that names the compiler's types, used as a consumer would; and one wrong use, which
-		// must fail, so the types aren't `any`.
-		writeFileSync(join(root, "index.ts"), [
+		// must fail, so the types aren't \`any\`.
+		const lines = [
 			`import { parse, lineOf, restrict, runRules } from "@raresportan/marram/core/ratchet";`,
 			`import { comments } from "@raresportan/marram/core/no-comments";`,
 			`import { checkProblems } from "@raresportan/marram/core/check-lint";`,
@@ -79,16 +98,32 @@ test("a TypeScript project compiles against the package's declarations, on the T
 			`import { readOnce } from "@raresportan/marram/core/journey-lint";`,
 			`import { acquisitions } from "@raresportan/marram/node/resource-lint";`,
 			`import { effectSets } from "@raresportan/marram/react/effect-lint";`,
-			`const source = parse("x.ts");`,
+			...checked,
+			`if (journey === undefined) throw new Error("no journey");`,
+			`const source = parse("journey.ts");`,
 			`export const line: number = lineOf(source, source.statements[0]);`,
 			`export const found = [comments(source), checkProblems(source), importsOf("fs")(source), acquisitions(source), effectSets(source)];`,
-			`export { readOnce, restrict, runRules };`,
+			`export const once: string[] = readOnce(journey, checker);`,
+			`export { restrict, runRules };`,
 			`export const wrong: string = source.statements;`,
+		];
+		writeFileSync(join(root, "index.ts"), lines.join("\n"));
+		// The same, run: readOnce with the consumer's checker, and a rule whose finder reads the file's name.
+		writeFileSync(join(root, "run.mjs"), [
+			...lines.slice(0, -2).filter((line) => !line.startsWith("export const found")).map((line) => line.replace(/^export const (\w+): [\w[\]]+ =/, "const $1 =")),
+			`const es6 = runRules({ root: ".", folder: ".", list: "rules.mjs", match: /\\.es6$/g, rules: [{ find: (tree) => (tree.fileName.endsWith(".es6") ? comments(tree) : []), allowed: {}, fix: "remove it", stale: "has none" }] });`,
+			`console.log(JSON.stringify({ once, es6 }));`,
 		].join("\n"));
 		const tsc = spawnSync(process.execPath, [join(modules, "typescript", "bin", "tsc"), "-p", root], { cwd: root, encoding: "utf8" });
 		const errors = tsc.stdout.split("\n").filter((line) => /error TS/.test(line));
 		assert.equal(errors.length, 1, tsc.stdout + tsc.stderr);
-		assert.match(errors[0], /index\.ts\(12,14\): error TS2322/);
+		assert.match(errors[0], new RegExp(`index\\.ts\\(${lines.length},14\\): error TS2322`));
+		const run = spawnSync(process.execPath, ["run.mjs"], { cwd: root, encoding: "utf8" });
+		assert.equal(run.status, 0, run.stderr);
+		assert.deepEqual(JSON.parse(run.stdout), {
+			once: ["line 2: a polled check nobody awaits: the journey goes on, and may end, before it's recorded"],
+			es6: ["./plugin.es6:1 has a comment: remove it, or list it in rules.mjs with why"],
+		});
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
