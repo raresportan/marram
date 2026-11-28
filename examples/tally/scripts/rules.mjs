@@ -42,4 +42,4 @@ const problems = [
 	...lintChecks({ root, folder: "scripts", match: /\.test\.ts$/ }).problems,
 	...lintJourneys({ root, folder: "scripts/verify", tsconfig: "tsconfig.json" }).problems,
 ];
-finish("rules", problems, "the imports, the store, resources, comments, effects, promises and checks are all in order");
+await finish("rules", problems, "the imports, the store, resources, comments, effects, promises and checks are all in order");
