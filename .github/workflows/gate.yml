@@ -28,10 +28,10 @@ jobs:
     timeout-minutes: 30
     steps:
       # Nothing here pushes, and the gate runs the pull request's code: it gets no token to read in .git/config.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -50,7 +50,7 @@ jobs:
           PROBE_TIMEOUT_MS: "600000"
       - name: Keep the gate's logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gate-logs-${{ matrix.os }}
           path: |
@@ -68,7 +68,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: actionlint
@@ -87,12 +87,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The base branch's history, for the merge base.
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Compare the guards with the base branch
@@ -121,7 +121,7 @@ jobs:
           mkdir guard-report
           cp guard-diff.txt guard-report/
           printf '%s\n' "$PR" > guard-report/pr
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         # Not when the run was cancelled, which leaves nothing to report.
         if: success() || failure()
         with:
