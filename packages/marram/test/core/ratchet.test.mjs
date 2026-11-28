@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import ts from "typescript";
+import ts from "../../src/core/typescript.mjs";
 import { lineOf, ratchet, restrict, runRules } from "../../src/core/ratchet.mjs";
 
 const rule = (allowed, found) => ratchet({ list: "lint.mjs", allowed, found, fix: "use the owner", stale: () => "no longer does it" });

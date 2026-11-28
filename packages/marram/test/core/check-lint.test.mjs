@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import ts from "typescript";
+import ts from "../../src/core/typescript.mjs";
 import { checkProblems, lintChecks } from "../../src/core/check-lint.mjs";
 
 const lint = (code, waits) => checkProblems(ts.createSourceFile("x-check.ts", code, ts.ScriptTarget.Latest, true), waits);

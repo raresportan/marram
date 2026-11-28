@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import ts from "typescript";
+import ts from "../../src/core/typescript.mjs";
 
 const PKG = join(import.meta.dirname, "../..");
 const SRC = join(PKG, "src");

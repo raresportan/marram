@@ -18,7 +18,8 @@ const scratch = join(pkg, ".build", `${process.pid}-${Date.now()}`);
 const OUTPUT = /\.(js|d\.ts)$/;
 
 try {
-	const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+	// From the package's folder: TypeScript 7 doesn't export its bin/tsc, as 5 does.
+	const tsc = join(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "bin", "tsc");
 	execFileSync(process.execPath, [tsc, "-p", join(pkg, "tsconfig.build.json"), "--outDir", scratch], { stdio: "inherit" });
 	for (const file of readdirSync(scratch, { recursive: true, encoding: "utf8" })) {
 		if (!OUTPUT.test(file)) continue;
