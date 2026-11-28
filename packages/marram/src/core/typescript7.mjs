@@ -35,16 +35,53 @@ function compiler() {
 	return api;
 }
 
-/** A source file's tree, as 5's createSourceFile parses it: `text`, read as `fileName` (whose extension says the kind). */
-function createSourceFile(fileName, text) {
-	const file = resolve(fileName);
-	const changed = served.has(file);
+// The extension 7 reads each script kind from: it takes no kind, and a file whose extension names none crashes it.
+const EXTENSIONS = { [ast.ScriptKind.TS]: ".ts", [ast.ScriptKind.TSX]: ".tsx", [ast.ScriptKind.JS]: ".js", [ast.ScriptKind.JSX]: ".jsx" };
+const KIND_OF = { ".ts": ast.ScriptKind.TS, ".mts": ast.ScriptKind.TS, ".cts": ast.ScriptKind.TS, ".tsx": ast.ScriptKind.TSX, ".js": ast.ScriptKind.JS, ".mjs": ast.ScriptKind.JS, ".cjs": ast.ScriptKind.JS, ".jsx": ast.ScriptKind.JSX };
+
+/**
+ * A source file's tree, as 5's createSourceFile parses it: `text`, read as `fileName`, as `kind` (or as the kind its
+ * extension says, and as TypeScript's when it says none, as 5 does). A file whose extension isn't its kind's is parsed
+ * under its name with that kind's extension added: `rule.es6` as `rule.es6.js`.
+ *
+ * The text is served only for the parse, and its snapshots are let go once the next parse has its own: a program
+ * built later reads the file from the disk, as it is then, and a scan of many files holds one snapshot, not two each.
+ */
+function createSourceFile(fileName, text, _target, _setParentNodes, kind) {
+	const named = resolve(fileName);
+	const extension = /\.[^./\\]+$/.exec(named)?.[0]?.toLowerCase();
+	const wanted = EXTENSIONS[kind] === undefined ? (KIND_OF[extension] ?? ast.ScriptKind.TS) : kind;
+	const file = KIND_OF[extension] === wanted ? named : named + EXTENSIONS[wanted];
 	served.set(file, text);
-	// Open for as long as it's read: the compiler keeps an open file's first text, so one parsed again is reopened.
-	const snapshot = compiler().updateSnapshot({ openFiles: [file], ...(changed ? { fileChanges: { changed: [file] } } : {}) });
-	const source = snapshot.getDefaultProjectForFile(file).program.getSourceFile(file);
-	compiler().updateSnapshot({ closeFiles: [file] });
-	return source;
+	// Marked changed every time: the compiler may hold this file's text from an earlier parse, or from the disk.
+	const snapshot = open({ openFiles: [file], fileChanges: { changed: [file] } });
+	settled?.dispose();
+	try {
+		return snapshot.getDefaultProjectForFile(file).program.getSourceFile(file);
+	} finally {
+		settled = open({ closeFiles: [file] });
+		snapshot.dispose();
+		served.delete(file);
+	}
+}
+
+// The snapshot the last parse ended on, disposed once the next parse has one after it. On 7.0.2, when every snapshot
+// is disposed before the next one is made, the next parse of a file gets the text it had then, whatever it's served.
+let settled;
+
+// Snapshots made and not yet disposed: each holds the compiler's state for it until it is.
+let live = 0;
+
+/** A snapshot of the compiler after `changes`, counted until it's disposed. */
+function open(changes) {
+	const snapshot = compiler().updateSnapshot(changes);
+	live++;
+	const dispose = snapshot.dispose.bind(snapshot);
+	snapshot.dispose = () => {
+		if (!snapshot.isDisposed()) live--;
+		dispose();
+	};
+	return snapshot;
 }
 
 // The config a parsed command line came from: createProgram opens it, rather than turning its options back into JSON.
@@ -70,8 +107,12 @@ function createProgram(rootNames, options) {
 	const config = resolve(dirname(from ?? files[0] ?? resolve("index.ts")), `.marram-program-${process.pid}-${made++}.json`);
 	served.set(config, JSON.stringify(from === undefined ? { compilerOptions: named(options), files } : { extends: from, files, include: [] }));
 	// Files on disk may have changed since an earlier program read them: this one reads them afresh.
-	const snapshot = compiler().updateSnapshot({ openProjects: [config], fileChanges: { invalidateAll: true } });
-	return programOf(snapshot.getProject(config));
+	const snapshot = open({ openProjects: [config], fileChanges: { invalidateAll: true } });
+	return programOf(snapshot.getProject(config), () => {
+		snapshot.dispose();
+		open({ closeProjects: [config] }).dispose();
+		served.delete(config);
+	});
 }
 
 // Options 5's createProgram takes as enum members, which a config names.
@@ -82,9 +123,16 @@ function named(options) {
 	return Object.fromEntries(Object.entries(options).map(([key, value]) => [key, typeof value === "number" && ENUMS[key]?.[value] !== undefined ? ENUMS[key][value] : value]));
 }
 
-function programOf(project) {
+/** 5's program, over 7's project; `release` lets go of what 7 holds for it (see typescript.mjs's `release`). */
+function programOf(project, letGo) {
 	const { program } = project;
+	let released = false;
 	return {
+		release() {
+			if (released) return;
+			released = true;
+			letGo();
+		},
 		getSourceFile: (name) => program.getSourceFile(resolve(name)),
 		getSourceFiles: () => program.getSourceFileNames().map((name) => program.getSourceFile(name)),
 		getTypeChecker: () => checkerOf(project.checker),
@@ -188,6 +236,7 @@ export default {
 	flattenDiagnosticMessageText: (message) => (typeof message === "string" ? message : message?.messageText ?? ""),
 	forEachChild: (node, visit) => node.forEachChild(visit),
 	getChildren,
+	liveSnapshots: () => live,
 	isPropertySignature: kinds(K.PropertySignature),
 	isMethodSignature: kinds(K.MethodSignature),
 	isStringLiteralLike: kinds(K.StringLiteral, K.NoSubstitutionTemplateLiteral),

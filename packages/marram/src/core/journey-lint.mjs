@@ -6,7 +6,7 @@
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { lineOf } from "./ratchet.mjs";
-import ts from "./typescript.mjs";
+import ts, { release } from "./typescript.mjs";
 
 const isFunction = (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node);
 /** Awaits something itself, not in a function it defines. */
@@ -40,6 +40,10 @@ export function lintJourneys({ root, folder, tsconfig, session = "session" }) {
 	const config = ts.getParsedCommandLineOfConfigFile(join(root, tsconfig), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
 	if (config === undefined) throw new Error(`Can't read ${tsconfig}`);
 	const program = ts.createProgram(files, config.options);
-	const checker = program.getTypeChecker();
-	return { files: files.length, problems: files.flatMap((file) => readOnce(program.getSourceFile(file), checker, session).map((problem) => `${relative(root, file)}: ${problem}`)) };
+	try {
+		const checker = program.getTypeChecker();
+		return { files: files.length, problems: files.flatMap((file) => readOnce(program.getSourceFile(file), checker, session).map((problem) => `${relative(root, file)}: ${problem}`)) };
+	} finally {
+		release(program);
+	}
 }

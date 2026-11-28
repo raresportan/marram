@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import ts from "../../src/core/typescript.mjs";
+import ts, { release } from "../../src/core/typescript.mjs";
 
 const PKG = join(import.meta.dirname, "../..");
 const SRC = join(PKG, "src");
@@ -27,11 +27,15 @@ function declarationFiles(folder) {
 /** The values a declaration file exports (functions, constants and classes, not types), `export *` included. */
 function declaredValues(file) {
 	const program = ts.createProgram([file], { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, noEmit: true });
-	const checker = program.getTypeChecker();
-	return checker.getExportsOfModule(checker.getSymbolAtLocation(program.getSourceFile(file)))
-		.filter((symbol) => ((symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol).flags & ts.SymbolFlags.Value) !== 0)
-		.map((symbol) => symbol.name)
-		.sort();
+	try {
+		const checker = program.getTypeChecker();
+		return checker.getExportsOfModule(checker.getSymbolAtLocation(program.getSourceFile(file)))
+			.filter((symbol) => ((symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol).flags & ts.SymbolFlags.Value) !== 0)
+			.map((symbol) => symbol.name)
+			.sort();
+	} finally {
+		release(program);
+	}
 }
 
 test("each module's declarations match its exports", async () => {

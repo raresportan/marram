@@ -32,5 +32,11 @@ async function sevens() {
 
 export default ts;
 
+/**
+ * Lets go of `program` once its lint is done. On 5 a program is memory the collector frees; on 7 it's a project the
+ * compiler's process holds open, with its snapshot, until it's released.
+ */
+export const release = seven ? (program) => program.release() : () => {};
+
 /** A node's children with the tokens between them: 5's `node.getChildren(source)`, which 7's nodes don't have. */
 export const children = seven ? ts.getChildren : (node, source) => node.getChildren(source);
