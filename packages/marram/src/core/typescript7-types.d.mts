@@ -1,5 +1,7 @@
 // The compiler's types the lints' declarations name, on TypeScript 7.0, whose trees are in `typescript/unstable/ast`.
-// Its checker isn't 5's: the lints take the checker typescript7.mjs builds, which answers as 5's does.
+// Its checker isn't 5's: the lints take the checker typescript7.mjs builds, which answers as 5's does. The repository's
+// typecheck runs on 5, which has no `typescript/unstable/ast`, so it leaves this file out (tsconfig.json): it's checked
+// on 7.0 by declarations.test.mjs, in CI's TypeScript 7 job.
 import type { Node, SourceFile } from "typescript/unstable/ast";
 export type { Node, SourceFile };
 
