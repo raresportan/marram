@@ -68,6 +68,9 @@ test("a file whose extension names no kind is parsed as the kind it's given, or 
 		writeFileSync(join(root, "rule.es6"), "// a comment\nconst x = <b>1</b>;\n");
 		const rule = { find: comments, allowed: {}, fix: "remove it", stale: "has none" };
 		assert.deepEqual(runRules({ root, folder: ".", list: "rules.mjs", match: /\.es6$/g, rules: [rule] }), ["./rule.es6:1 has a comment: remove it, or list it in rules.mjs with why"]);
+		// A finder that reads the tree's name sees the file's own, not the name it was parsed under.
+		const named = { ...rule, find: (source) => (source.fileName.endsWith(".es6") ? comments(source) : []) };
+		assert.deepEqual(runRules({ root, folder: ".", list: "rules.mjs", match: /\.es6$/g, rules: [named] }), ["./rule.es6:1 has a comment: remove it, or list it in rules.mjs with why"]);
 		const jsx = ts.createSourceFile(join(root, "rule.es6"), "const x = <b>1</b>;", ts.ScriptTarget.Latest, true, ts.ScriptKind.JSX);
 		assert.equal(jsx.languageVariant, ts.LanguageVariant.JSX);
 		const unnamed = ts.createSourceFile(join(root, "notes.txt"), "let a: number = 1;", ts.ScriptTarget.Latest, true);
