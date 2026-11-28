@@ -51,6 +51,9 @@ Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and befo
   - `marram init`'s pre-push hook is executable from the moment it's there. Before, a push in that moment skipped it.
   - Journeys running at once with the same `appDir` could start each other's profile, through one shared
     `bootstrap.mjs`.
+  - Two processes recovering the same abandoned state-file lock could both hold it: one that judged the holder gone
+    and paused removed the lock the other had taken meanwhile. A gone holder's lock is now taken by its marker, which
+    only one process can move, and put back if another process took the lock since.
 
 ## 0.3.1 — 2026-11-27
 
