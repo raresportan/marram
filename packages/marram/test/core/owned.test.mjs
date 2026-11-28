@@ -90,86 +90,141 @@ test("a folder a gone process was making is removed, and one a live process is m
 	assert.deepEqual(readdirSync(root).sort(), [names[3], names[2], names[1]].sort());
 }));
 
-test("a lock whose holder is gone is taken at once, and one whose holder still works is waited for, however long", async () => {
-	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
-	try {
-		const lock = join(root, "state.lock");
-		mkdirSync(lock);
-		writeFileSync(join(lock, "running"), String(deadPid()));
-		const started = Date.now();
-		assert.equal(withLock(lock, () => "mine", { staleMs: 60_000 }), "mine");
-		assert.ok(Date.now() - started < 5_000, "taken without waiting for staleMs");
-		assert.equal(existsSync(lock), false);
-		// Another process holds it for a second, well past staleMs: it's still working, so the lock is waited for.
-		const order = join(root, "order");
-		const holder = spawn(process.execPath, ["--input-type=module", "-e", `
-			import { appendFileSync } from "node:fs";
-			import { withLock } from ${JSON.stringify(OWNED)};
-			withLock(${JSON.stringify(lock)}, () => {
-				appendFileSync(${JSON.stringify(order)}, "held ");
-				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
-				appendFileSync(${JSON.stringify(order)}, "let-go ");
-			});
-		`], { stdio: "inherit" });
-		const exited = new Promise((resolve) => holder.on("exit", resolve));
-		for (const until = Date.now() + 20_000; !existsSync(order); ) {
-			if (Date.now() > until) assert.fail("the other process never took the lock");
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		}
-		withLock(lock, () => writeFileSync(order, `${readFileSync(order, "utf8")}mine`), { staleMs: 50 });
-		assert.equal(await exited, 0);
-		assert.equal(readFileSync(order, "utf8"), "held let-go mine");
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+// The lock's schedules: each test runs contenders in processes of their own, which can pause at a hook (`judged`, once
+// the highest generation's holder is judged gone; `staged`, once its own generation is written but not yet published)
+// until a flag file appears, or be killed there, and can hold the lock until a flag appears.
+const FLAG_WAIT = "(path) => { while (!existsSync(path)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); }";
 
-test("two processes recovering the same dead holder's lock: one paused after judging it dead doesn't take the other's", async () => {
-	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
-	let children = [];
-	try {
-		const lock = join(root, "state.lock");
-		mkdirSync(lock);
-		// As 0.3 and withLock before tokens wrote it: the holder's process id alone.
-		writeFileSync(join(lock, "running"), String(deadPid()));
-		const order = join(root, "order");
-		const flag = (name) => join(root, name);
-		/** A process that takes the lock, pausing until `go` exists if `pauseAfterJudging`, and holding it until `release` does. */
-		const contender = (name, { pauseAfterJudging = false, holdUntil } = {}) => spawn(process.execPath, ["--input-type=module", "-e", `
-			import { appendFileSync, existsSync } from "node:fs";
-			import { withLock } from ${JSON.stringify(OWNED)};
-			const wait = (path) => { while (!existsSync(path)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); };
-			withLock(${JSON.stringify(lock)}, () => {
-				appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(`${name}-in `)});
-				${holdUntil ? `wait(${JSON.stringify(flag(holdUntil))});` : ""}
-				appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(`${name}-out `)});
-			}, { judged: ${pauseAfterJudging ? `() => { appendFileSync(${JSON.stringify(flag("judged"))}, ""); wait(${JSON.stringify(flag("go"))}); }` : "undefined"} });
-		`], { stdio: "inherit" });
-		const exited = (child) => new Promise((resolve) => (child.exitCode !== null ? resolve(child.exitCode) : child.on("exit", resolve)));
-		children = [];
-		const appears = async (path) => {
+/** Lock schedules in `root`: start contenders, wait for flags, and kill what's left at the end. */
+function schedule(root) {
+	const lock = join(root, "state.locks");
+	const order = join(root, "order");
+	const flag = (name) => join(root, name);
+	const children = [];
+	return {
+		lock,
+		flag,
+		order: () => (existsSync(order) ? readFileSync(order, "utf8") : ""),
+		/** A process that takes the lock as `name`: at `pauseAt` it marks `<name>-<hook>` and waits for `<name>-go`. */
+		contender(name, { pauseAt, holdUntil, holdMs } = {}) {
+			const hook = (at) => (pauseAt === at ? `() => { appendFileSync(${JSON.stringify(flag(`${name}-${at}`))}, ""); wait(${JSON.stringify(flag(`${name}-go`))}); }` : "undefined");
+			const child = spawn(process.execPath, ["--input-type=module", "-e", `
+				import { appendFileSync, existsSync } from "node:fs";
+				import { withLock } from ${JSON.stringify(OWNED)};
+				const wait = ${FLAG_WAIT};
+				withLock(${JSON.stringify(lock)}, () => {
+					appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(`${name}-in `)});
+					${holdUntil ? `wait(${JSON.stringify(flag(holdUntil))});` : ""}
+					${holdMs ? `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${holdMs});` : ""}
+					appendFileSync(${JSON.stringify(order)}, ${JSON.stringify(`${name}-out `)});
+				}, { judged: ${hook("judged")}, staged: ${hook("staged")} });
+			`], { stdio: "inherit" });
+			children.push(child);
+			return child;
+		},
+		async appears(path) {
 			for (const until = Date.now() + 20_000; !existsSync(path); ) {
 				if (Date.now() > until) assert.fail(`${path} never appeared`);
 				await new Promise((resolve) => setTimeout(resolve, 10));
 			}
-		};
-		// The first judges the holder dead and pauses there; the second recovers the lock and holds it.
-		const first = contender("first", { pauseAfterJudging: true });
-		children.push(first);
-		await appears(flag("judged"));
-		const second = contender("second", { holdUntil: "release" });
-		children.push(second);
-		await appears(order);
-		// The first goes on while the second holds the lock: it must wait, not take it.
-		writeFileSync(flag("go"), "");
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		assert.equal(readFileSync(order, "utf8"), "second-in ", "the first didn't enter while the second held the lock");
-		writeFileSync(flag("release"), "");
-		assert.deepEqual([await exited(second), await exited(first)], [0, 0]);
-		assert.equal(readFileSync(order, "utf8"), "second-in second-out first-in first-out ");
+		},
+		exited: (child) => new Promise((resolve) => (child.exitCode !== null || child.signalCode !== null ? resolve(child.exitCode) : child.on("exit", (code) => resolve(code)))),
+		/** A holder that's gone: the highest generation, marked by a process that has exited. */
+		goneHolder() {
+			mkdirSync(join(lock, "1"), { recursive: true });
+			writeFileSync(join(lock, "1", "running"), `${deadPid()} 0000000000000000`);
+		},
+		end: () => children.forEach((child) => child.kill("SIGKILL")),
+	};
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("a lock whose holder is gone is taken at once, and one whose holder still works is waited for, however long", async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
+	const run = schedule(root);
+	try {
+		run.goneHolder();
+		const started = Date.now();
+		assert.equal(withLock(run.lock, () => "mine"), "mine");
+		assert.ok(Date.now() - started < 5_000, "taken without waiting");
+		assert.deepEqual(readdirSync(run.lock), [], "and it leaves nothing behind: the gone holder's generation and its own");
+		// Held for a second by another process: withLock here waits, blocking this process, until it lets go.
+		const holder = run.contender("holder", { holdMs: 1000 });
+		await run.appears(join(root, "order"));
+		withLock(run.lock, () => writeFileSync(join(root, "order"), `${run.order()}mine`));
+		assert.equal(await run.exited(holder), 0);
+		assert.equal(run.order(), "holder-in holder-out mine");
 	} finally {
-		// A failure leaves the contenders waiting for a flag: they go with the test.
-		for (const child of children) child.kill("SIGKILL");
+		run.end();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a process paused after judging the holder gone doesn't take the lock another took meanwhile", async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
+	const run = schedule(root);
+	try {
+		run.goneHolder();
+		const first = run.contender("first", { pauseAt: "judged" });
+		await run.appears(run.flag("first-judged"));
+		const second = run.contender("second", { holdUntil: "release" });
+		await run.appears(join(root, "order"));
+		writeFileSync(run.flag("first-go"), "");
+		await sleep(500);
+		assert.equal(run.order(), "second-in ", "the first didn't enter while the second held the lock");
+		writeFileSync(run.flag("release"), "");
+		assert.deepEqual([await run.exited(second), await run.exited(first)], [0, 0]);
+		assert.equal(run.order(), "second-in second-out first-in first-out ");
+	} finally {
+		run.end();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a process paused with its marker written but not yet published doesn't share the lock with one that takes it meanwhile", async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
+	const run = schedule(root);
+	try {
+		const first = run.contender("first", { pauseAt: "staged" });
+		await run.appears(run.flag("first-staged"));
+		const second = run.contender("second", { holdUntil: "release" });
+		await run.appears(join(root, "order"));
+		writeFileSync(run.flag("first-go"), "");
+		await sleep(500);
+		assert.equal(run.order(), "second-in ", "the first didn't enter while the second held the lock");
+		writeFileSync(run.flag("release"), "");
+		assert.deepEqual([await run.exited(second), await run.exited(first)], [0, 0]);
+		assert.equal(run.order(), "second-in second-out first-in first-out ");
+	} finally {
+		run.end();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a process killed partway through recovering leaves the live holder's lock whole, past any stale interval", async () => {
+	const root = mkdtempSync(join(tmpdir(), "marram-owned-"));
+	const run = schedule(root);
+	try {
+		run.goneHolder();
+		// The recoverer judges the holder gone and writes its own generation; the holder takes the lock meanwhile; the
+		// recoverer is killed there, before it can do anything about it.
+		const recoverer = run.contender("recoverer", { pauseAt: "staged" });
+		await run.appears(run.flag("recoverer-staged"));
+		const holder = run.contender("holder", { holdUntil: "release" });
+		await run.appears(join(root, "order"));
+		recoverer.kill("SIGKILL");
+		await run.exited(recoverer);
+		// A third process, past the 10 s a lock used to be taken after, while the holder still works.
+		const third = run.contender("third");
+		await sleep(11_000);
+		assert.equal(run.order(), "holder-in ", "the third didn't enter while the holder held the lock");
+		writeFileSync(run.flag("release"), "");
+		assert.deepEqual([await run.exited(holder), await run.exited(third)], [0, 0]);
+		assert.equal(run.order(), "holder-in holder-out third-in third-out ");
+		assert.deepEqual(readdirSync(run.lock), [], "and the killed recoverer's leftovers are gone");
+	} finally {
+		run.end();
 		rmSync(root, { recursive: true, force: true });
 	}
 });

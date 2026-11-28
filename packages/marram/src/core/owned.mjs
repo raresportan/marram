@@ -7,9 +7,9 @@
 //     one, so a reader sees the old file or the new one, never half of one;
 //   - what's removed is what this process made, or a folder whose maker is gone (removeIfDone, removeAbandoned);
 //   - a lock names its holder, so it's taken from a holder that's gone, never from one that's still working (withLock).
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 /** A folder holds this while the process that owns it runs: that process's id. */
 const MARKER = "running";
@@ -124,7 +124,7 @@ export function writeWhole(path, data, options = {}) {
 	}
 }
 
-/** A lock's marker: its holder's process id and a token of this taking, or the id alone as 0.3 wrote it. */
+/** A lock generation's marker: its holder's process id (and a token of its taking), undefined when there's none, or null when it can't be read. */
 function lockHolder(path) {
 	let text;
 	try {
@@ -133,84 +133,92 @@ function lockHolder(path) {
 		return error.code === "ENOENT" ? undefined : null;
 	}
 	const pid = Number(text.trim().split(" ")[0]);
-	return { pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, text };
+	return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/** The generations in the lock folder `path`, highest first. */
+function generations(path) {
+	let names;
+	try {
+		names = readdirSync(path);
+	} catch (error) {
+		if (error.code === "ENOENT") return [];
+		throw error;
+	}
+	return names.filter((name) => /^\d+$/.test(name)).map(Number).sort((a, b) => b - a);
+}
+
+/** Removes `folder` whole, at once: renamed aside first, so no one sees it half removed. Whether it was there. */
+function removeWhole(folder) {
+	const aside = `${dirname(folder)}${sep}.gone-${process.pid}-${randomBytes(4).toString("hex")}`;
+	try {
+		renameSync(folder, aside);
+	} catch {
+		return false;
+	}
+	rmSync(aside, { recursive: true, force: true });
+	return true;
+}
+
+/** Whether lock generation `number` in `path` may be held: its marker names a process that runs, or can't be read. */
+function held(path, number) {
+	const pid = lockHolder(join(path, String(number), MARKER));
+	return pid === null || (pid !== undefined && alive(pid));
 }
 
 /**
- * Takes the lock `path` from a holder that's gone, if its marker still reads `seen`. The marker is renamed aside first,
- * which only one process can do: then it's read. If it's still the gone holder's, the folder, now empty, is removed,
- * and whoever makes it next holds the lock. If another process took the lock meanwhile (this one paused after judging
- * the holder gone), the marker is that live holder's: it's put back, and nothing else was touched.
+ * Runs `action` holding the lock `path`, and returns what it returns.
+ *
+ * The lock is a folder of generations, numbered folders each holding a marker: the holder's process id and a token.
+ * A process holds the lock while its generation is the only one whose process runs. To take it, a process waits until
+ * no other generation is held, writes one of its own under a staging name, marker and all, and renames it to a number
+ * above every generation there: a rename onto a name that's there fails, so one process gets each number, and no
+ * generation is ever seen half written. Once published, it holds the lock only if no other generation is held, and
+ * otherwise gives way (removes its own and tries again after a moment): two that publish at once each see the other
+ * and give way, rather than both going in. No process moves or removes a held generation: a gone holder's is passed
+ * over, not taken away, so pausing or dying at any point leaves the lock whole. A generation goes (renamed aside,
+ * then removed) when its holder lets go, or once another holds the lock. `judged` runs once a generation's holder is
+ * judged gone, and `staged` once this process's generation is written but not yet published, for a test to pause there.
  */
-function takeOver(path, seen) {
-	const marker = join(path, MARKER);
-	const aside = `${path}.taken-${process.pid}-${randomBytes(4).toString("hex")}`;
-	try {
-		renameSync(marker, aside);
-	} catch {
-		// Moved or removed by another process first, or the lock is gone: look again.
-		return;
-	}
-	if (readFileSync(aside, "utf8") === seen) {
-		rmSync(aside, { force: true });
+export function withLock(path, action, { judged = () => {}, staged = () => {} } = {}) {
+	mkdirSync(path, { recursive: true });
+	const marker = `${process.pid} ${randomBytes(8).toString("hex")}`;
+	let mine;
+	while (mine === undefined) {
+		const before = generations(path);
+		if (before.some((number) => held(path, number))) {
+			pause(10);
+			continue;
+		}
+		if (before.length > 0) judged();
+		const staging = join(path, `.staging-${process.pid}-${randomBytes(4).toString("hex")}`);
+		mkdirSync(staging);
+		writeFileSync(join(staging, MARKER), marker);
+		staged();
+		const next = (generations(path)[0] ?? 0) + 1;
 		try {
-			rmdirSync(path);
+			renameSync(staging, join(path, String(next)));
 		} catch {
-			// Not empty, or gone: someone else's now.
+			// Another process published that number first.
+			rmSync(staging, { recursive: true, force: true });
+			continue;
 		}
-		return;
+		if (generations(path).some((number) => number !== next && held(path, number))) {
+			// Another process holds it, or published at the same moment: give way, and try again after a moment of
+			// this process's own, so two that met don't meet again.
+			removeWhole(join(path, String(next)));
+			pause(5 + Math.floor(Math.random() * 25));
+		} else mine = next;
 	}
-	try {
-		renameSync(aside, marker);
-	} catch {
-		// The live holder let go meanwhile and its folder went with it.
-		rmSync(aside, { force: true });
-	}
-}
-
-/**
- * Runs `action` holding the lock `path` (a folder: making one either succeeds or finds it there), and returns what it
- * returns. The lock's marker names this process and a token of this taking, and is written only if no marker is there.
- * A lock whose holder is gone is taken over at once (takeOver), by its marker, never by removing the folder whatever is
- * in it, so a process that judged a holder gone and paused can't take a lock another process has taken since. One not
- * marked is taken after `staleMs`, the time between making a folder and writing a file in it being far less, and
- * only while it's empty. `judged` runs once a holder is judged gone, before it's taken over, for a test to pause there.
- */
-export function withLock(path, action, { staleMs = 10_000, judged = () => {} } = {}) {
-	const mine = `${process.pid} ${randomBytes(8).toString("hex")}`;
-	for (;;) {
-		try {
-			mkdirSync(path);
-			// Only if there's no marker: a folder made, removed and made again by another process meanwhile is theirs.
-			writeFileSync(join(path, MARKER), mine, { flag: "wx" });
-			break;
-		} catch (error) {
-			if (error.code !== "EEXIST" && error.code !== "ENOENT") throw error;
-		}
-		const found = lockHolder(join(path, MARKER));
-		if (found === null) {
-			// A marker that can't be read: whether its holder is gone isn't known.
-			pause(10);
-		} else if (found === undefined) {
-			const age = Date.now() - (statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-			if (age <= staleMs) pause(10);
-			else {
-				try {
-					rmdirSync(path);
-				} catch {
-					// Marked or removed meanwhile.
-				}
-			}
-		} else if (found.pid !== undefined && alive(found.pid)) {
-			pause(10);
-		} else {
-			judged();
-			takeOver(path, found.text);
-		}
+	// The others hold nothing: what's left of gone holders, and of those that gave way.
+	for (const other of generations(path).filter((number) => number !== mine)) if (!held(path, other)) removeWhole(join(path, String(other)));
+	for (const name of readdirSync(path)) {
+		const [, pid] = /^\.(?:staging|gone)-(\d+)-/.exec(name) ?? [];
+		if (pid !== undefined && !alive(Number(pid))) rmSync(join(path, name), { recursive: true, force: true });
 	}
 	try {
 		return action();
 	} finally {
-		rmSync(path, { recursive: true, force: true });
+		removeWhole(join(path, String(mine)));
 	}
 }
