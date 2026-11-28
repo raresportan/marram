@@ -1,7 +1,7 @@
 // The no-comments rule: doc comments, license headers and links stay; the rest goes. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import ts from "typescript";
+import ts from "../../src/core/typescript.mjs";
 import { comments } from "../../src/core/no-comments.mjs";
 
 const found = (code) => comments(ts.createSourceFile("x.ts", code, ts.ScriptTarget.Latest, true)).map(({ line }) => line);
@@ -24,6 +24,8 @@ test("doc comments, license headers and links aren't", () => {
 
 test("text that looks like a comment isn't one", () => {
 	assert.deepEqual(found("const a = '// not one'; const b = `/* nor this */`;"), []);
+	// A pattern's text is the pattern's: on TypeScript 7, whose tokens are scanned here, `\/\/` must not read as `//`.
+	assert.deepEqual(found("const link = /https?:\\/\\//; const any = /a*/;"), []);
 	const jsx = (code) => comments(ts.createSourceFile("x.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)).map(({ line }) => line);
 	assert.deepEqual(jsx("const a = <p>see // here, /* and here */</p>;"), []);
 	assert.deepEqual(jsx("const a = <p>// not one</p>;"), []);

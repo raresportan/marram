@@ -1,7 +1,7 @@
 // The effect lint's finder: an effect that sets its component's state in its own body. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import ts from "typescript";
+import ts from "../../src/core/typescript.mjs";
 import { effectSets } from "../../src/react/effect-lint.mjs";
 
 const sets = (code) => effectSets(ts.createSourceFile("x.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)).map(({ line, effect, setter }) => `${line} ${effect} ${setter}`);

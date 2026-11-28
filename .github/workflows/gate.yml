@@ -59,6 +59,30 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
+  # The lints on TypeScript 7.0, the other version the peer range takes: the gate runs them on the 5 the repository
+  # installs, and 7.0 reaches them only through the adapter (packages/marram/src/core/typescript7.mjs), whose API 7.0
+  # marks unstable. A 7.0 release that changes it fails here.
+  typescript-7:
+    name: Unit tests on TypeScript 7.0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install, with TypeScript 7.0 in place of 5
+        run: |
+          npm ci
+          npm install --no-save typescript@~7.0.2
+      - name: Unit tests
+        run: npm test -w @raresportan/marram
+
   # The workflows themselves, which no gate stage can run: actionlint for what GitHub would reject or misread (an
   # expression, a condition, a job's needs), zizmor for what lets a pull request's code reach a token or a write.
   workflows:

@@ -1,7 +1,7 @@
 // What starts a lasting resource, as the resource lint's finder sees it. Run: npm test -w @raresportan/marram
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import ts from "typescript";
+import ts from "../../src/core/typescript.mjs";
 import { acquisitions } from "../../src/node/resource-lint.mjs";
 
 const found = (code) => acquisitions(ts.createSourceFile("x.ts", code, ts.ScriptTarget.Latest, true)).map(({ line, what }) => `${line} ${what}`);

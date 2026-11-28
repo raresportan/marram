@@ -2,6 +2,15 @@
 
 Changes to `@raresportan/marram`, newest first. Earlier versions (0.2.3 and before) have no entries here.
 
+## Unreleased
+
+### Added
+
+- **TypeScript 7.0**: the lints run on `typescript` 7.0 (what `npm install typescript` gives now) as well as 5. The peer
+  range is `^5.9.3 || ~7.0.2`. 7.0's JavaScript API isn't 5's, so on 7.0 the lints read code through an adapter that
+  gives them the part of 5's API they use. 7.1 changes that API again: until it's adapted, the lints say so there, with
+  the command that installs TypeScript 5 beside it.
+
 ## 0.4.0 — 2026-11-28
 
 ### Added
