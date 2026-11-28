@@ -70,7 +70,8 @@ export function readState(cwd) {
  */
 export function updateState(cwd, change) {
 	const path = statePath(cwd);
-	return withLock(`${path}.lock`, () => {
+	// .locks, not 0.3's .lock folder: a 0.3 process could remove that whole, generations and all.
+	return withLock(`${path}.locks`, () => {
 		const state = readState(cwd);
 		const result = change(state);
 		const newest = (rows) => Object.fromEntries(Object.entries(rows).sort(([, a], [, b]) => b.at - a.at).slice(0, KEEP));

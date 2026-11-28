@@ -67,12 +67,13 @@ test("an interrupted supervisor kills what the command left running, so its call
 });
 
 test("a command that exits leaving a process that holds its output still has its timeout: what it left is stopped, and it timed out", POSIX, () => {
-	// The wrapper exits at once; what it started keeps stdout open for two seconds, past the timeout.
-	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], { stdio: "inherit" }).unref();';
+	// The wrapper exits at once; what it started keeps stdout open for ten seconds, past the timeout. The bound is well
+	// under that, so a slow machine (a busy CI runner) doesn't take a correct answer for the broken one.
+	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { stdio: "inherit" }).unref();';
 	const started = Date.now();
 	const result = runBounded(process.execPath, ["-e", wrapper], { timeout: 600, capture: true });
 	assert.equal(result.error?.code, "ETIMEDOUT", JSON.stringify(result));
-	assert.ok(Date.now() - started < 1_800, `took ${Date.now() - started} ms`);
+	assert.ok(Date.now() - started < 6_000, `took ${Date.now() - started} ms`);
 	// One that leaves nothing behind still reports at once.
 	const quick = Date.now();
 	assert.equal(runBounded(process.execPath, ["-e", "process.exit(0)"], { timeout: 10_000 }).status, 0);
@@ -80,12 +81,12 @@ test("a command that exits leaving a process that holds its output still has its
 });
 
 test("a process the command starts in a group of its own, holding its output, doesn't hold the caller past the timeout", () => {
-	// Detached, so it's in no group the supervisor can signal; it keeps stdout open for two seconds.
-	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], { stdio: "inherit", detached: true }).unref();';
+	// Detached, so it's in no group the supervisor can signal; it keeps stdout open for ten seconds, well past the bound.
+	const wrapper = 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { stdio: "inherit", detached: true }).unref();';
 	const started = Date.now();
 	const result = runBounded(process.execPath, ["-e", wrapper], { timeout: 500, capture: true });
 	assert.equal(result.error?.code, "ETIMEDOUT", JSON.stringify(result));
-	assert.ok(Date.now() - started < 1_800, `took ${Date.now() - started} ms`);
+	assert.ok(Date.now() - started < 6_000, `took ${Date.now() - started} ms`);
 });
 
 test("a command whose output goes to a terminal is told to colour it, unless the project says otherwise or its output is captured", () => {
@@ -166,7 +167,7 @@ test("after SIGKILL, a worker that exited but isn't reaped yet doesn't keep the 
 	const root = mkdtempSync(join(tmpdir(), "marram-bounded-"));
 	try {
 		// A holder leaves the command's group and forks a worker that joins it and exits at once. The holder never reaps
-		// it, so the exited worker stays in the group until the holder exits, 9 s on, and its parent then reaps it.
+		// it, so the exited worker stays in the group until the holder exits, 20 s on, and its parent then reaps it.
 		const holderPid = join(root, "holder");
 		const holder = [
 			"import os, sys, time",
@@ -176,7 +177,7 @@ test("after SIGKILL, a worker that exited but isn't reaped yet doesn't keep the 
 			"if os.fork() == 0:",
 			"    os.setpgid(0, group)",
 			"    os._exit(0)",
-			"time.sleep(9)",
+			"time.sleep(20)",
 		].join("\n");
 		const command = `require("node:child_process").spawn("python3", ["-c", ${JSON.stringify(holder)}, String(process.pid)], { stdio: "ignore" }); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`;
 		const started = Date.now();
@@ -184,8 +185,9 @@ test("after SIGKILL, a worker that exited but isn't reaped yet doesn't keep the 
 		const took = Date.now() - started;
 		if (existsSync(holderPid)) try { process.kill(Number(readFileSync(holderPid, "utf8")), "SIGKILL"); } catch {}
 		assert.equal(result.code, "ETIMEDOUT");
-		// The timeout, the grace period and a moment for SIGKILL to land, not however long the holder takes.
-		assert.ok(took < 8000, `took ${took} ms`);
+		// The timeout, the grace period and a moment for SIGKILL to land (6.5 s), not the holder's 20 s: a bound well
+		// between the two, so a busy machine doesn't take the right answer for the wrong one.
+		assert.ok(took < 14_000, `took ${took} ms`);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
